@@ -100,6 +100,29 @@
   background: #e65c52;
 }
 
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.power-button {
+  border: 1px solid #655f56;
+  border-radius: 4px;
+  padding: 7px 10px;
+  color: #d6d0c4;
+  background: #292824;
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.power-button:hover {
+  color: #ffffff;
+  border-color: #989082;
+}
+
 .counter {
   color: #b8b4aa;
 }
@@ -186,6 +209,35 @@
   pointer-events: none;
 }
 
+.capture-message {
+  position: absolute;
+  z-index: 3;
+  right: 20px;
+  bottom: 18px;
+  max-width: min(80%, 620px);
+  overflow: hidden;
+  border: 1px solid rgba(238, 232, 220, 0.22);
+  border-radius: 5px;
+  padding: 10px 12px;
+  color: #eee8dc;
+  background: rgba(17, 17, 15, 0.84);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+}
+
+.capture-message-success {
+  border-color: rgba(117, 197, 133, 0.55);
+  color: #b7e6bf;
+}
+
+.capture-message-error {
+  border-color: rgba(232, 109, 96, 0.58);
+  color: #ffaaa1;
+}
+
 .control-bar {
   min-height: 118px;
   border-top: 1px solid #48443d;
@@ -239,6 +291,10 @@
   transform: translateY(2px) scale(0.97);
 }
 
+.shutter-button-capturing {
+  animation: shutter-flash 350ms ease;
+}
+
 .shutter-button:disabled {
   cursor: wait;
   opacity: 0.65;
@@ -247,6 +303,13 @@
 @keyframes blink {
   to {
     opacity: 0.35;
+  }
+}
+
+@keyframes shutter-flash {
+  50% {
+    filter: brightness(1.9);
+    transform: scale(0.94);
   }
 }
 
@@ -262,6 +325,10 @@
 
   .viewfinder {
     min-height: 420px;
+  }
+
+  .power-button {
+    display: none;
   }
 
   .counter {

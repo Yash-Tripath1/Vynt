@@ -1,6 +1,7 @@
-import { app, BrowserWindow, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, session } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { writeFile } from 'node:fs/promises'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -15,6 +16,11 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST
 
 let win: BrowserWindow | null = null
+
+function createCaptureFileName(): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return `vynt-${timestamp}.png`
+}
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -41,7 +47,6 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // VYNT is a camera app. Allow only webcam/media permission requests.
   session.defaultSession.setPermissionCheckHandler(
     (_webContents, permission) => permission === 'media'
   )
@@ -51,6 +56,38 @@ app.whenReady().then(() => {
       callback(permission === 'media')
     }
   )
+
+  ipcMain.handle('vynt:save-photo', async (_event, dataUrl: string) => {
+    if (!dataUrl.startsWith('data:image/png;base64,')) {
+      throw new Error('VYNT received an invalid image capture.')
+    }
+
+    const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
+      title: 'Save VYNT photo',
+      defaultPath: createCaptureFileName(),
+      filters: [
+        {
+          name: 'PNG image',
+          extensions: ['png']
+        }
+      ]
+    })
+
+    if (canceled || !filePath) {
+      return {
+        saved: false,
+        filePath: null
+      }
+    }
+
+    const base64Image = dataUrl.replace(/^data:image\/png;base64,/, '')
+    await writeFile(filePath, Buffer.from(base64Image, 'base64'))
+
+    return {
+      saved: true,
+      filePath
+    }
+  })
 
   createWindow()
 

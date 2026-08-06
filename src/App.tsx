@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
+type CaptureMessage = {
+  tone: 'success' | 'error' | 'neutral'
+  text: string
+}
 
 function App(): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -9,6 +13,9 @@ function App(): React.JSX.Element {
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
   const [errorMessage, setErrorMessage] = useState('')
+  const [captureMessage, setCaptureMessage] = useState<CaptureMessage | null>(null)
+  const [isCapturing, setIsCapturing] = useState(false)
+  const [photoCount, setPhotoCount] = useState(0)
 
   const stopCamera = (): void => {
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -19,12 +26,17 @@ function App(): React.JSX.Element {
     }
 
     setCameraStatus('idle')
+    setCaptureMessage({
+      tone: 'neutral',
+      text: 'Camera turned off.'
+    })
   }
 
   const startCamera = async (): Promise<void> => {
     try {
       setCameraStatus('starting')
       setErrorMessage('')
+      setCaptureMessage(null)
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -60,6 +72,77 @@ function App(): React.JSX.Element {
     }
   }
 
+  const capturePhoto = async (): Promise<void> => {
+    const video = videoRef.current
+
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+      setCaptureMessage({
+        tone: 'error',
+        text: 'The camera frame is not ready yet. Try again in a moment.'
+      })
+      return
+    }
+
+    try {
+      setIsCapturing(true)
+      setCaptureMessage({
+        tone: 'neutral',
+        text: 'Developing photo…'
+      })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+
+      const context = canvas.getContext('2d')
+
+      if (!context) {
+        throw new Error('VYNT could not create an image canvas.')
+      }
+
+      // The live preview is mirrored, so mirror the saved image to match it.
+      context.translate(canvas.width, 0)
+      context.scale(-1, 1)
+      context.drawImage(video, 0, 0, canvas.width, canvas.height)
+
+      const imageDataUrl = canvas.toDataURL('image/png')
+      const result = await window.vynt.savePhoto(imageDataUrl)
+
+      if (result.saved && result.filePath) {
+        setPhotoCount((count) => count + 1)
+        setCaptureMessage({
+          tone: 'success',
+          text: `Saved: ${result.filePath}`
+        })
+      } else {
+        setCaptureMessage({
+          tone: 'neutral',
+          text: 'Save cancelled.'
+        })
+      }
+    } catch (error) {
+      console.error('Unable to capture photo:', error)
+
+      setCaptureMessage({
+        tone: 'error',
+        text: 'VYNT could not save that photo. Please try again.'
+      })
+    } finally {
+      setIsCapturing(false)
+    }
+  }
+
+  const handleShutter = (): void => {
+    if (cameraStatus === 'live') {
+      void capturePhoto()
+      return
+    }
+
+    if (cameraStatus !== 'starting') {
+      void startCamera()
+    }
+  }
+
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -89,7 +172,15 @@ function App(): React.JSX.Element {
             {statusText}
           </div>
 
-          <div className="counter">MEM 0000</div>
+          <div className="top-actions">
+            {cameraStatus === 'live' && (
+              <button className="power-button" type="button" onClick={stopCamera}>
+                TURN OFF
+              </button>
+            )}
+
+            <div className="counter">MEM {String(photoCount).padStart(4, '0')}</div>
+          </div>
         </header>
 
         <div className="viewfinder">
@@ -122,6 +213,12 @@ function App(): React.JSX.Element {
           </div>
 
           <div className="focus-box" />
+
+          {captureMessage && (
+            <div className={`capture-message capture-message-${captureMessage.tone}`}>
+              {captureMessage.text}
+            </div>
+          )}
         </div>
 
         <footer className="control-bar">
@@ -131,11 +228,11 @@ function App(): React.JSX.Element {
           </div>
 
           <button
-            className="shutter-button"
+            className={`shutter-button ${isCapturing ? 'shutter-button-capturing' : ''}`}
             type="button"
-            onClick={cameraStatus === 'live' ? stopCamera : startCamera}
-            disabled={cameraStatus === 'starting'}
-            aria-label={cameraStatus === 'live' ? 'Stop camera' : 'Start camera'}
+            onClick={handleShutter}
+            disabled={cameraStatus === 'starting' || isCapturing}
+            aria-label={cameraStatus === 'live' ? 'Capture photo' : 'Start camera'}
           >
             <span />
           </button>
