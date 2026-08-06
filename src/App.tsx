@@ -93,13 +93,17 @@ function App(): React.JSX.Element {
         </header>
 
         <div className="viewfinder">
-          {cameraStatus === 'live' && (
-            <video ref={videoRef} className="camera-feed" muted playsInline />
-          )}
+          <video
+            ref={videoRef}
+            className={`camera-feed ${cameraStatus === 'live' ? 'camera-feed-visible' : ''}`}
+            muted
+            playsInline
+          />
 
           {cameraStatus !== 'live' && (
             <div className="viewfinder-empty">
               <div className="viewfinder-icon">◉</div>
+
               <p>
                 {cameraStatus === 'starting'
                   ? 'Opening camera…'
