@@ -2,14 +2,159 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
+
 type CaptureMessage = {
   tone: 'success' | 'error' | 'neutral'
   text: string
 }
 
+const PREVIEW_WIDTH = 640
+const PREVIEW_HEIGHT = 480
+const CAPTURE_WIDTH = 1200
+const CAPTURE_HEIGHT = 900
+
+function clamp(value: number): number {
+  return Math.max(0, Math.min(255, value))
+}
+
+function drawMirroredCover(
+  context: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  targetWidth: number,
+  targetHeight: number
+): void {
+  const sourceWidth = video.videoWidth
+  const sourceHeight = video.videoHeight
+  const sourceAspectRatio = sourceWidth / sourceHeight
+  const targetAspectRatio = targetWidth / targetHeight
+
+  let sourceX = 0
+  let sourceY = 0
+  let cropWidth = sourceWidth
+  let cropHeight = sourceHeight
+
+  if (sourceAspectRatio > targetAspectRatio) {
+    cropWidth = sourceHeight * targetAspectRatio
+    sourceX = (sourceWidth - cropWidth) / 2
+  } else {
+    cropHeight = sourceWidth / targetAspectRatio
+    sourceY = (sourceHeight - cropHeight) / 2
+  }
+
+  context.clearRect(0, 0, targetWidth, targetHeight)
+
+  // Mirror the rendered photo so the saved photo matches the live preview.
+  context.save()
+  context.translate(targetWidth, 0)
+  context.scale(-1, 1)
+
+  context.drawImage(
+    video,
+    sourceX,
+    sourceY,
+    cropWidth,
+    cropHeight,
+    0,
+    0,
+    targetWidth,
+    targetHeight
+  )
+
+  context.restore()
+}
+
+function applyDigicamEffect(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number
+): void {
+  const imageData = context.getImageData(0, 0, width, height)
+  const data = imageData.data
+  const original = new Uint8ClampedArray(data)
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixelIndex = (y * width + x) * 4
+
+      // Small red/blue channel separation: cheap digicam lens imperfection.
+      const leftX = Math.max(0, x - 1)
+      const rightX = Math.min(width - 1, x + 1)
+      const leftIndex = (y * width + leftX) * 4
+      const rightIndex = (y * width + rightX) * 4
+
+      let red = original[leftIndex]
+      let green = original[pixelIndex + 1]
+      let blue = original[rightIndex + 2]
+
+      // Warm, imperfect white balance.
+      red = red * 1.08 + 7
+      green = green * 0.99 + 1
+      blue = blue * 0.89 - 2
+
+      // Slight contrast and faded highlight behaviour.
+      red = (red - 128) * 1.07 + 128
+      green = (green - 128) * 1.04 + 128
+      blue = (blue - 128) * 1.01 + 128
+
+      // CCD/sensor grain. It intentionally moves a little in the live preview.
+      const noise = (Math.random() - 0.5) * 13
+      red += noise * 1.05
+      green += noise * 0.82
+      blue += noise * 0.72
+
+      // Gentle vignette.
+      const normalizedX = (x - width / 2) / (width / 2)
+      const normalizedY = (y - height / 2) / (height / 2)
+      const distanceFromCenter = Math.sqrt(
+        normalizedX * normalizedX + normalizedY * normalizedY
+      )
+      const vignette = 1 - Math.max(0, distanceFromCenter - 0.34) * 0.26
+
+      red *= vignette
+      green *= vignette
+      blue *= vignette
+
+      // Reduce colour precision to make the output less modern/clean.
+      const colourStep = 12
+      data[pixelIndex] = clamp(Math.round(red / colourStep) * colourStep)
+      data[pixelIndex + 1] = clamp(Math.round(green / colourStep) * colourStep)
+      data[pixelIndex + 2] = clamp(Math.round(blue / colourStep) * colourStep)
+      data[pixelIndex + 3] = 255
+    }
+  }
+
+  context.putImageData(imageData, 0, 0)
+}
+
+function renderDigicamFrame(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number
+): void {
+  canvas.width = width
+  canvas.height = height
+
+  const context = canvas.getContext('2d', {
+    willReadFrequently: true
+  })
+
+  if (!context) {
+    throw new Error('VYNT could not create an image-rendering canvas.')
+  }
+
+  context.imageSmoothingEnabled = false
+
+  drawMirroredCover(context, video, width, height)
+  applyDigicamEffect(context, width, height)
+}
+
 function App(): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const animationFrameRef = useRef<number | null>(null)
+  const lastFrameTimeRef = useRef(0)
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
   const [errorMessage, setErrorMessage] = useState('')
@@ -17,7 +162,16 @@ function App(): React.JSX.Element {
   const [isCapturing, setIsCapturing] = useState(false)
   const [photoCount, setPhotoCount] = useState(0)
 
+  const stopPreviewRender = (): void => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current)
+      animationFrameRef.current = null
+    }
+  }
+
   const stopCamera = (): void => {
+    stopPreviewRender()
+
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
 
@@ -87,25 +241,19 @@ function App(): React.JSX.Element {
       setIsCapturing(true)
       setCaptureMessage({
         tone: 'neutral',
-        text: 'Developing photo…'
+        text: 'Developing 2007 Digicam photo…'
       })
 
-      const canvas = document.createElement('canvas')
-      canvas.width = video.videoWidth
-      canvas.height = video.videoHeight
+      const captureCanvas = document.createElement('canvas')
 
-      const context = canvas.getContext('2d')
+      renderDigicamFrame(
+        video,
+        captureCanvas,
+        CAPTURE_WIDTH,
+        CAPTURE_HEIGHT
+      )
 
-      if (!context) {
-        throw new Error('VYNT could not create an image canvas.')
-      }
-
-      // The live preview is mirrored, so mirror the saved image to match it.
-      context.translate(canvas.width, 0)
-      context.scale(-1, 1)
-      context.drawImage(video, 0, 0, canvas.width, canvas.height)
-
-      const imageDataUrl = canvas.toDataURL('image/png')
+      const imageDataUrl = captureCanvas.toDataURL('image/png')
       const result = await window.vynt.savePhoto(imageDataUrl)
 
       if (result.saved && result.filePath) {
@@ -144,7 +292,44 @@ function App(): React.JSX.Element {
   }
 
   useEffect(() => {
+    if (cameraStatus !== 'live') {
+      return
+    }
+
+    const renderPreview = (time: number): void => {
+      const video = videoRef.current
+      const canvas = previewCanvasRef.current
+
+      // Render at roughly 30 FPS. This keeps the old-camera effect smooth
+      // without unnecessarily pushing the integrated GPU/CPU.
+      if (
+        video &&
+        canvas &&
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        time - lastFrameTimeRef.current >= 33
+      ) {
+        lastFrameTimeRef.current = time
+
+        try {
+          renderDigicamFrame(video, canvas, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+        } catch (error) {
+          console.error('Unable to render VYNT preview:', error)
+        }
+      }
+
+      animationFrameRef.current = requestAnimationFrame(renderPreview)
+    }
+
+    animationFrameRef.current = requestAnimationFrame(renderPreview)
+
     return () => {
+      stopPreviewRender()
+    }
+  }, [cameraStatus])
+
+  useEffect(() => {
+    return () => {
+      stopPreviewRender()
       streamRef.current?.getTracks().forEach((track) => track.stop())
     }
   }, [])
@@ -184,11 +369,11 @@ function App(): React.JSX.Element {
         </header>
 
         <div className="viewfinder">
-          <video
-            ref={videoRef}
-            className={`camera-feed ${cameraStatus === 'live' ? 'camera-feed-visible' : ''}`}
-            muted
-            playsInline
+          <video ref={videoRef} className="source-video" muted playsInline />
+
+          <canvas
+            ref={previewCanvasRef}
+            className={`camera-canvas ${cameraStatus === 'live' ? 'camera-canvas-visible' : ''}`}
           />
 
           {cameraStatus !== 'live' && (
@@ -239,7 +424,7 @@ function App(): React.JSX.Element {
 
           <div className="mode-readout right-readout">
             <span className="control-label">FILTER</span>
-            <strong>RAW</strong>
+            <strong>2007</strong>
           </div>
         </footer>
       </section>
