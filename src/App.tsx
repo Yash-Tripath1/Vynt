@@ -2,11 +2,23 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
-type FilterMode = 'original' | 'digicam' | 'nightflash' | 'vhs' | 'goldenfilm'
+type FilterMode =
+  | 'original'
+  | 'vyntage'
+  | 'digicam'
+  | 'nightflash'
+  | 'vhs'
+  | 'goldenfilm'
 
 type CaptureMessage = {
   tone: 'success' | 'error' | 'neutral'
   text: string
+}
+
+type RenderSettings = {
+  filterMode: FilterMode
+  pixelSize: number
+  grain: number
 }
 
 const PREVIEW_WIDTH = 640
@@ -19,31 +31,12 @@ const FILTERS: Array<{
   label: string
   shortLabel: string
 }> = [
-  {
-    id: 'original',
-    label: 'ORIGINAL',
-    shortLabel: 'RAW'
-  },
-  {
-    id: 'digicam',
-    label: '2007 DIGICAM',
-    shortLabel: '2007'
-  },
-  {
-    id: 'nightflash',
-    label: 'NIGHT FLASH',
-    shortLabel: 'FLASH'
-  },
-  {
-    id: 'vhs',
-    label: 'VHS TAPE',
-    shortLabel: 'VHS'
-  },
-  {
-    id: 'goldenfilm',
-    label: 'GOLDEN FILM',
-    shortLabel: 'FILM'
-  }
+  { id: 'original', label: 'ORIGINAL', shortLabel: 'RAW' },
+  { id: 'vyntage', label: 'VYNTAGE', shortLabel: 'VYNT' },
+  { id: 'digicam', label: '2007 DIGICAM', shortLabel: '2007' },
+  { id: 'nightflash', label: 'NIGHT FLASH', shortLabel: 'FLASH' },
+  { id: 'vhs', label: 'VHS TAPE', shortLabel: 'VHS' },
+  { id: 'goldenfilm', label: 'GOLDEN FILM', shortLabel: 'FILM' }
 ]
 
 function clamp(value: number): number {
@@ -84,7 +77,7 @@ function drawMirroredCover(
 
   context.clearRect(0, 0, targetWidth, targetHeight)
 
-  // Mirrors the image so the saved photo matches VYNT's live viewfinder.
+  // VYNT mirrors photos so the saved image matches the viewfinder.
   context.save()
   context.translate(targetWidth, 0)
   context.scale(-1, 1)
@@ -108,15 +101,17 @@ function applyPreset(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
-  filterMode: FilterMode
+  filterMode: FilterMode,
+  grain: number
 ): void {
-  if (filterMode === 'original') {
+  if (filterMode === 'original' && grain === 0) {
     return
   }
 
   const imageData = context.getImageData(0, 0, width, height)
   const data = imageData.data
   const original = new Uint8ClampedArray(data)
+  const manualGrain = grain * 0.28
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -133,13 +128,41 @@ function applyPreset(
         normalizedX * normalizedX + normalizedY * normalizedY
       )
 
+      if (filterMode === 'vyntage') {
+        // VYNTAGE: faded 1990s point-and-shoot / disposable-camera memory.
+        red = red * 1.1 + 15
+        green = green * 1.01 + 7
+        blue = blue * 0.8 + 1
+
+        // Faded, imperfect colours instead of hyper-modern saturation.
+        red = luminance + (red - luminance) * 0.84
+        green = luminance + (green - luminance) * 0.79
+        blue = luminance + (blue - luminance) * 0.7
+
+        // Lift the blacks and soften contrast for the aged-print feeling.
+        red = (red - 128) * 0.87 + 138
+        green = (green - 128) * 0.85 + 134
+        blue = (blue - 128) * 0.82 + 127
+
+        // Dusty film texture.
+        const noise = (Math.random() - 0.5) * (15 + manualGrain)
+        red += noise * 1.1
+        green += noise * 0.93
+        blue += noise * 0.72
+
+        // A soft old-lens vignette.
+        const vignette = 1 - Math.max(0, distanceFromCenter - 0.2) * 0.2
+        red *= vignette
+        green *= vignette
+        blue *= vignette
+      }
+
       if (filterMode === 'digicam') {
         const leftX = Math.max(0, x - 1)
         const rightX = Math.min(width - 1, x + 1)
         const leftIndex = (y * width + leftX) * 4
         const rightIndex = (y * width + rightX) * 4
 
-        // Cheap old-lens red/blue separation.
         red = original[leftIndex]
         green = original[pixelIndex + 1]
         blue = original[rightIndex + 2]
@@ -152,7 +175,7 @@ function applyPreset(
         green = (green - 128) * 1.04 + 128
         blue = (blue - 128) * 1.01 + 128
 
-        const noise = (Math.random() - 0.5) * 13
+        const noise = (Math.random() - 0.5) * (13 + manualGrain)
         red += noise * 1.05
         green += noise * 0.82
         blue += noise * 0.72
@@ -169,7 +192,6 @@ function applyPreset(
       }
 
       if (filterMode === 'nightflash') {
-        // Harsh direct flash: bright face/centre, cold shadows, noisy blacks.
         red = luminance * 1.18 + 24
         green = luminance * 1.1 + 14
         blue = luminance * 1.2 + 26
@@ -179,7 +201,7 @@ function applyPreset(
         green *= flashFalloff
         blue *= flashFalloff
 
-        const noise = (Math.random() - 0.5) * 24
+        const noise = (Math.random() - 0.5) * (24 + manualGrain)
         red += noise
         green += noise * 0.85
         blue += noise * 1.22
@@ -195,7 +217,6 @@ function applyPreset(
         const leftIndex = (y * width + leftX) * 4
         const rightIndex = (y * width + rightX) * 4
 
-        // Wider channel split for analogue tape-style colour bleed.
         red = original[leftIndex]
         green = original[pixelIndex + 1]
         blue = original[rightIndex + 2]
@@ -205,25 +226,22 @@ function applyPreset(
         green = mutedLuminance + (green - mutedLuminance) * 0.68
         blue = mutedLuminance + (blue - mutedLuminance) * 0.82 + 7
 
-        // Alternating darker rows create tape/CRT scanlines.
         const scanline = y % 4 < 2 ? 0.86 : 1
         red *= scanline
         green *= scanline
         blue *= scanline
 
-        const noise = (Math.random() - 0.5) * 20
+        const noise = (Math.random() - 0.5) * (20 + manualGrain)
         red += noise
         green += noise
         blue += noise * 1.2
 
-        // Slight tape fade.
         red = red * 0.94 + 8
         green = green * 0.94 + 7
         blue = blue * 0.96 + 10
       }
 
       if (filterMode === 'goldenfilm') {
-        // Warm faded-film palette.
         red = red * 1.15 + 18
         green = green * 1.03 + 10
         blue = blue * 0.78 + 2
@@ -232,15 +250,23 @@ function applyPreset(
         green = (green - 128) * 0.86 + 133
         blue = (blue - 128) * 0.84 + 128
 
-        const grain = (Math.random() - 0.5) * 9
-        red += grain
-        green += grain * 0.9
-        blue += grain * 0.7
+        const noise = (Math.random() - 0.5) * (9 + manualGrain)
+        red += noise
+        green += noise * 0.9
+        blue += noise * 0.7
 
         const vignette = 1 - Math.max(0, distanceFromCenter - 0.24) * 0.18
         red *= vignette
         green *= vignette
         blue *= vignette
+      }
+
+      // Grain can also be used with ORIGINAL mode.
+      if (filterMode === 'original' && grain > 0) {
+        const noise = (Math.random() - 0.5) * manualGrain
+        red += noise
+        green += noise
+        blue += noise
       }
 
       data[pixelIndex] = clamp(red)
@@ -258,23 +284,45 @@ function renderFrame(
   canvas: HTMLCanvasElement,
   width: number,
   height: number,
-  filterMode: FilterMode
+  settings: RenderSettings
 ): void {
   canvas.width = width
   canvas.height = height
 
-  const context = canvas.getContext('2d', {
-    willReadFrequently: filterMode !== 'original'
-  })
+  const context = canvas.getContext('2d')
 
   if (!context) {
     throw new Error('VYNT could not create an image-rendering canvas.')
   }
 
-  context.imageSmoothingEnabled = false
+  const workingWidth = Math.max(1, Math.floor(width / settings.pixelSize))
+  const workingHeight = Math.max(1, Math.floor(height / settings.pixelSize))
+  const workingCanvas = document.createElement('canvas')
+  workingCanvas.width = workingWidth
+  workingCanvas.height = workingHeight
 
-  drawMirroredCover(context, video, width, height)
-  applyPreset(context, width, height, filterMode)
+  const workingContext = workingCanvas.getContext('2d', {
+    willReadFrequently: settings.filterMode !== 'original' || settings.grain > 0
+  })
+
+  if (!workingContext) {
+    throw new Error('VYNT could not create a texture canvas.')
+  }
+
+  workingContext.imageSmoothingEnabled = false
+  drawMirroredCover(workingContext, video, workingWidth, workingHeight)
+  applyPreset(
+    workingContext,
+    workingWidth,
+    workingHeight,
+    settings.filterMode,
+    settings.grain
+  )
+
+  // Enlarging a lower-resolution image with smoothing off creates true pixel blocks.
+  context.imageSmoothingEnabled = false
+  context.clearRect(0, 0, width, height)
+  context.drawImage(workingCanvas, 0, 0, width, height)
 }
 
 function App(): React.JSX.Element {
@@ -285,11 +333,19 @@ function App(): React.JSX.Element {
   const lastFrameTimeRef = useRef(0)
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
-  const [filterMode, setFilterMode] = useState<FilterMode>('digicam')
+  const [filterMode, setFilterMode] = useState<FilterMode>('vyntage')
+  const [pixelSize, setPixelSize] = useState(3)
+  const [grain, setGrain] = useState(34)
   const [errorMessage, setErrorMessage] = useState('')
   const [captureMessage, setCaptureMessage] = useState<CaptureMessage | null>(null)
   const [isCapturing, setIsCapturing] = useState(false)
   const [photoCount, setPhotoCount] = useState(0)
+
+  const renderSettings: RenderSettings = {
+    filterMode,
+    pixelSize,
+    grain
+  }
 
   const stopPreviewRender = (): void => {
     if (animationFrameRef.current !== null) {
@@ -380,7 +436,7 @@ function App(): React.JSX.Element {
         captureCanvas,
         CAPTURE_WIDTH,
         CAPTURE_HEIGHT,
-        filterMode
+        renderSettings
       )
 
       const imageDataUrl = captureCanvas.toDataURL('image/png')
@@ -439,13 +495,7 @@ function App(): React.JSX.Element {
         lastFrameTimeRef.current = time
 
         try {
-          renderFrame(
-            video,
-            canvas,
-            PREVIEW_WIDTH,
-            PREVIEW_HEIGHT,
-            filterMode
-          )
+          renderFrame(video, canvas, PREVIEW_WIDTH, PREVIEW_HEIGHT, renderSettings)
         } catch (error) {
           console.error('Unable to render VYNT preview:', error)
         }
@@ -459,7 +509,7 @@ function App(): React.JSX.Element {
     return () => {
       stopPreviewRender()
     }
-  }, [cameraStatus, filterMode])
+  }, [cameraStatus, filterMode, pixelSize, grain])
 
   useEffect(() => {
     return () => {
@@ -547,6 +597,38 @@ function App(): React.JSX.Element {
                 {filter.label}
               </button>
             ))}
+          </div>
+
+          <div className="texture-panel" aria-label="VYNT texture controls">
+            <label className="texture-control">
+              <span>
+                PIXEL SIZE <strong>{pixelSize}</strong>
+              </span>
+              <input
+                type="range"
+                min="1"
+                max="14"
+                step="1"
+                value={pixelSize}
+                onChange={(event) => setPixelSize(Number(event.target.value))}
+                disabled={isCapturing}
+              />
+            </label>
+
+            <label className="texture-control">
+              <span>
+                GRAIN <strong>{grain}</strong>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={grain}
+                onChange={(event) => setGrain(Number(event.target.value))}
+                disabled={isCapturing}
+              />
+            </label>
           </div>
 
           {captureMessage && (
