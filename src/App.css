@@ -215,12 +215,61 @@
   pointer-events: none;
 }
 
+.filter-dock {
+  position: absolute;
+  z-index: 3;
+  left: 20px;
+  bottom: 18px;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid rgba(238, 232, 220, 0.22);
+  border-radius: 5px;
+  background: rgba(17, 17, 15, 0.84);
+  backdrop-filter: blur(8px);
+}
+
+.filter-button {
+  border: 0;
+  border-right: 1px solid rgba(238, 232, 220, 0.16);
+  padding: 10px 12px;
+  color: #b7b0a4;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+}
+
+.filter-button:last-child {
+  border-right: 0;
+}
+
+.filter-button:hover:not(:disabled) {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.filter-button-active {
+  color: #221e16;
+  background: #d7b670;
+}
+
+.filter-button-active:hover:not(:disabled) {
+  color: #221e16;
+  background: #e7c97e;
+}
+
+.filter-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .capture-message {
   position: absolute;
   z-index: 3;
   right: 20px;
   bottom: 18px;
-  max-width: min(80%, 620px);
+  max-width: min(54%, 620px);
   overflow: hidden;
   border: 1px solid rgba(238, 232, 220, 0.22);
   border-radius: 5px;
@@ -336,5 +385,20 @@
   .power-button,
   .counter {
     display: none;
+  }
+
+  .filter-dock {
+    left: 12px;
+    bottom: 12px;
+  }
+
+  .filter-button {
+    padding: 9px 10px;
+    font-size: 0.58rem;
+  }
+
+  .capture-message {
+    right: 12px;
+    bottom: 12px;
   }
 }

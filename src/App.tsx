@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
+type FilterMode = 'original' | 'digicam'
 
 type CaptureMessage = {
   tone: 'success' | 'error' | 'neutral'
@@ -13,8 +14,33 @@ const PREVIEW_HEIGHT = 480
 const CAPTURE_WIDTH = 1200
 const CAPTURE_HEIGHT = 900
 
+const FILTERS: Array<{
+  id: FilterMode
+  label: string
+  shortLabel: string
+}> = [
+  {
+    id: 'original',
+    label: 'ORIGINAL',
+    shortLabel: 'RAW'
+  },
+  {
+    id: 'digicam',
+    label: '2007 DIGICAM',
+    shortLabel: '2007'
+  }
+]
+
 function clamp(value: number): number {
   return Math.max(0, Math.min(255, value))
+}
+
+function getFilterLabel(filterMode: FilterMode): string {
+  return FILTERS.find((filter) => filter.id === filterMode)?.label ?? 'ORIGINAL'
+}
+
+function getFilterShortLabel(filterMode: FilterMode): string {
+  return FILTERS.find((filter) => filter.id === filterMode)?.shortLabel ?? 'RAW'
 }
 
 function drawMirroredCover(
@@ -43,7 +69,7 @@ function drawMirroredCover(
 
   context.clearRect(0, 0, targetWidth, targetHeight)
 
-  // Mirror the rendered photo so the saved photo matches the live preview.
+  // VYNT mirrors the image so its saved photo matches the live viewfinder.
   context.save()
   context.translate(targetWidth, 0)
   context.scale(-1, 1)
@@ -76,33 +102,33 @@ function applyDigicamEffect(
     for (let x = 0; x < width; x += 1) {
       const pixelIndex = (y * width + x) * 4
 
-      // Small red/blue channel separation: cheap digicam lens imperfection.
       const leftX = Math.max(0, x - 1)
       const rightX = Math.min(width - 1, x + 1)
       const leftIndex = (y * width + leftX) * 4
       const rightIndex = (y * width + rightX) * 4
 
+      // Small red/blue separation: old cheap-lens colour fringing.
       let red = original[leftIndex]
       let green = original[pixelIndex + 1]
       let blue = original[rightIndex + 2]
 
-      // Warm, imperfect white balance.
+      // Warm, slightly inaccurate consumer-camera white balance.
       red = red * 1.08 + 7
       green = green * 0.99 + 1
       blue = blue * 0.89 - 2
 
-      // Slight contrast and faded highlight behaviour.
+      // Slight contrast and faded highlight response.
       red = (red - 128) * 1.07 + 128
       green = (green - 128) * 1.04 + 128
       blue = (blue - 128) * 1.01 + 128
 
-      // CCD/sensor grain. It intentionally moves a little in the live preview.
+      // Sensor grain.
       const noise = (Math.random() - 0.5) * 13
       red += noise * 1.05
       green += noise * 0.82
       blue += noise * 0.72
 
-      // Gentle vignette.
+      // Gentle darkened corners.
       const normalizedX = (x - width / 2) / (width / 2)
       const normalizedY = (y - height / 2) / (height / 2)
       const distanceFromCenter = Math.sqrt(
@@ -114,7 +140,7 @@ function applyDigicamEffect(
       green *= vignette
       blue *= vignette
 
-      // Reduce colour precision to make the output less modern/clean.
+      // Fewer colour levels = less modern/clean image output.
       const colourStep = 12
       data[pixelIndex] = clamp(Math.round(red / colourStep) * colourStep)
       data[pixelIndex + 1] = clamp(Math.round(green / colourStep) * colourStep)
@@ -126,17 +152,18 @@ function applyDigicamEffect(
   context.putImageData(imageData, 0, 0)
 }
 
-function renderDigicamFrame(
+function renderFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
   width: number,
-  height: number
+  height: number,
+  filterMode: FilterMode
 ): void {
   canvas.width = width
   canvas.height = height
 
   const context = canvas.getContext('2d', {
-    willReadFrequently: true
+    willReadFrequently: filterMode === 'digicam'
   })
 
   if (!context) {
@@ -144,9 +171,11 @@ function renderDigicamFrame(
   }
 
   context.imageSmoothingEnabled = false
-
   drawMirroredCover(context, video, width, height)
-  applyDigicamEffect(context, width, height)
+
+  if (filterMode === 'digicam') {
+    applyDigicamEffect(context, width, height)
+  }
 }
 
 function App(): React.JSX.Element {
@@ -157,6 +186,7 @@ function App(): React.JSX.Element {
   const lastFrameTimeRef = useRef(0)
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
+  const [filterMode, setFilterMode] = useState<FilterMode>('digicam')
   const [errorMessage, setErrorMessage] = useState('')
   const [captureMessage, setCaptureMessage] = useState<CaptureMessage | null>(null)
   const [isCapturing, setIsCapturing] = useState(false)
@@ -241,16 +271,17 @@ function App(): React.JSX.Element {
       setIsCapturing(true)
       setCaptureMessage({
         tone: 'neutral',
-        text: 'Developing 2007 Digicam photo…'
+        text: `Developing ${getFilterLabel(filterMode)} photo…`
       })
 
       const captureCanvas = document.createElement('canvas')
 
-      renderDigicamFrame(
+      renderFrame(
         video,
         captureCanvas,
         CAPTURE_WIDTH,
-        CAPTURE_HEIGHT
+        CAPTURE_HEIGHT,
+        filterMode
       )
 
       const imageDataUrl = captureCanvas.toDataURL('image/png')
@@ -260,7 +291,7 @@ function App(): React.JSX.Element {
         setPhotoCount((count) => count + 1)
         setCaptureMessage({
           tone: 'success',
-          text: `Saved: ${result.filePath}`
+          text: `Saved ${getFilterLabel(filterMode)} photo: ${result.filePath}`
         })
       } else {
         setCaptureMessage({
@@ -300,8 +331,6 @@ function App(): React.JSX.Element {
       const video = videoRef.current
       const canvas = previewCanvasRef.current
 
-      // Render at roughly 30 FPS. This keeps the old-camera effect smooth
-      // without unnecessarily pushing the integrated GPU/CPU.
       if (
         video &&
         canvas &&
@@ -311,7 +340,13 @@ function App(): React.JSX.Element {
         lastFrameTimeRef.current = time
 
         try {
-          renderDigicamFrame(video, canvas, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+          renderFrame(
+            video,
+            canvas,
+            PREVIEW_WIDTH,
+            PREVIEW_HEIGHT,
+            filterMode
+          )
         } catch (error) {
           console.error('Unable to render VYNT preview:', error)
         }
@@ -325,7 +360,7 @@ function App(): React.JSX.Element {
     return () => {
       stopPreviewRender()
     }
-  }, [cameraStatus])
+  }, [cameraStatus, filterMode])
 
   useEffect(() => {
     return () => {
@@ -399,6 +434,22 @@ function App(): React.JSX.Element {
 
           <div className="focus-box" />
 
+          <div className="filter-dock" aria-label="VYNT filter modes">
+            {FILTERS.map((filter) => (
+              <button
+                key={filter.id}
+                className={`filter-button ${
+                  filterMode === filter.id ? 'filter-button-active' : ''
+                }`}
+                type="button"
+                onClick={() => setFilterMode(filter.id)}
+                disabled={isCapturing}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
           {captureMessage && (
             <div className={`capture-message capture-message-${captureMessage.tone}`}>
               {captureMessage.text}
@@ -409,7 +460,7 @@ function App(): React.JSX.Element {
         <footer className="control-bar">
           <div className="mode-readout">
             <span className="control-label">MODE</span>
-            <strong>DIGICAM</strong>
+            <strong>{filterMode === 'digicam' ? 'DIGICAM' : 'ORIGINAL'}</strong>
           </div>
 
           <button
@@ -424,7 +475,7 @@ function App(): React.JSX.Element {
 
           <div className="mode-readout right-readout">
             <span className="control-label">FILTER</span>
-            <strong>2007</strong>
+            <strong>{getFilterShortLabel(filterMode)}</strong>
           </div>
         </footer>
       </section>
