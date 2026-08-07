@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
+type AspectMode = '16:9' | '4:3'
 type FilterMode =
   | 'original'
   | 'vyntage'
   | 'digicam'
   | 'nightflash'
+  | 'fisheye'
   | 'vhs'
   | 'goldenfilm'
 
@@ -20,12 +22,9 @@ type RenderSettings = {
   pixelSize: number
   grain: number
   zoom: number
+  aspectMode: AspectMode
+  dateImprint: boolean
 }
-
-const PREVIEW_WIDTH = 640
-const PREVIEW_HEIGHT = 480
-const CAPTURE_WIDTH = 1200
-const CAPTURE_HEIGHT = 900
 
 const FILTERS: Array<{
   id: FilterMode
@@ -36,6 +35,7 @@ const FILTERS: Array<{
   { id: 'vyntage', label: 'VYNTAGE', shortLabel: 'VYNT' },
   { id: 'digicam', label: '2007 DIGICAM', shortLabel: '2007' },
   { id: 'nightflash', label: 'NIGHT FLASH', shortLabel: 'FLASH' },
+  { id: 'fisheye', label: 'FISHEYE', shortLabel: 'FISH' },
   { id: 'vhs', label: 'VHS TAPE', shortLabel: 'VHS' },
   { id: 'goldenfilm', label: 'GOLDEN FILM', shortLabel: 'FILM' }
 ]
@@ -52,11 +52,26 @@ function getFilterShortLabel(filterMode: FilterMode): string {
   return FILTERS.find((filter) => filter.id === filterMode)?.shortLabel ?? 'RAW'
 }
 
+function getDimensions(aspectMode: AspectMode, quality: 'preview' | 'capture'): {
+  width: number
+  height: number
+} {
+  if (quality === 'preview') {
+    return aspectMode === '16:9'
+      ? { width: 640, height: 360 }
+      : { width: 640, height: 480 }
+  }
+
+  return aspectMode === '16:9'
+    ? { width: 1280, height: 720 }
+    : { width: 1200, height: 900 }
+}
+
 /*
-  Pixel settings now use a gentle curve:
-  - 1–5: subtle, believable old-camera texture
-  - 6–10: clearly chunky
-  - 11–14: intentionally wrecked / low-resolution
+  Low slider values remain subtle.
+  1–5 = believable old-camera texture.
+  6–10 = visibly chunky.
+  11–14 = deliberately wrecked.
 */
 function getEffectivePixelSize(pixelSize: number): number {
   return 1 + Math.pow(pixelSize - 1, 1.45) * 0.22
@@ -83,7 +98,6 @@ function drawMirroredCover(
     cropHeight = sourceWidth / targetAspectRatio
   }
 
-  // Digital zoom works by taking a smaller centre crop from the source image.
   cropWidth /= zoom
   cropHeight /= zoom
 
@@ -92,7 +106,6 @@ function drawMirroredCover(
 
   context.clearRect(0, 0, targetWidth, targetHeight)
 
-  // Mirror the image so exports match the VYNT live viewfinder.
   context.save()
   context.translate(targetWidth, 0)
   context.scale(-1, 1)
@@ -112,6 +125,54 @@ function drawMirroredCover(
   context.restore()
 }
 
+function applyFisheye(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number
+): void {
+  const imageData = context.getImageData(0, 0, width, height)
+  const source = new Uint8ClampedArray(imageData.data)
+  const output = imageData.data
+
+  const centerX = width / 2
+  const centerY = height / 2
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const outputIndex = (y * width + x) * 4
+      const normalizedX = (x - centerX) / centerX
+      const normalizedY = (y - centerY) / centerY
+      const radius = Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY)
+
+      if (radius > 1) {
+        output[outputIndex] = 8
+        output[outputIndex + 1] = 8
+        output[outputIndex + 2] = 7
+        output[outputIndex + 3] = 255
+        continue
+      }
+
+      // Curves and expands the middle of the image like a cheap fisheye lens.
+      const sourceRadius = Math.pow(radius, 1.55)
+      const angle = Math.atan2(normalizedY, normalizedX)
+
+      const sourceX = Math.round(centerX + Math.cos(angle) * sourceRadius * centerX)
+      const sourceY = Math.round(centerY + Math.sin(angle) * sourceRadius * centerY)
+
+      const safeX = Math.max(0, Math.min(width - 1, sourceX))
+      const safeY = Math.max(0, Math.min(height - 1, sourceY))
+      const sourceIndex = (safeY * width + safeX) * 4
+
+      output[outputIndex] = source[sourceIndex]
+      output[outputIndex + 1] = source[sourceIndex + 1]
+      output[outputIndex + 2] = source[sourceIndex + 2]
+      output[outputIndex + 3] = 255
+    }
+  }
+
+  context.putImageData(imageData, 0, 0)
+}
+
 function applyPreset(
   context: CanvasRenderingContext2D,
   width: number,
@@ -119,6 +180,10 @@ function applyPreset(
   filterMode: FilterMode,
   grain: number
 ): void {
+  if (filterMode === 'fisheye') {
+    applyFisheye(context, width, height)
+  }
+
   if (filterMode === 'original' && grain === 0) {
     return
   }
@@ -148,7 +213,6 @@ function applyPreset(
       )
 
       if (filterMode === 'vyntage') {
-        // VYNTAGE: faded 1990s point-and-shoot / disposable-camera feeling.
         red = red * 1.1 + 15
         green = green * 1.01 + 7
         blue = blue * 0.8 + 1
@@ -245,10 +309,6 @@ function applyPreset(
         red += noise
         green += noise
         blue += noise * 1.2
-
-        red = red * 0.94 + 8
-        green = green * 0.94 + 7
-        blue = blue * 0.96 + 10
       }
 
       if (filterMode === 'goldenfilm') {
@@ -264,11 +324,17 @@ function applyPreset(
         red += noise
         green += noise * 0.9
         blue += noise * 0.7
+      }
 
-        const vignette = 1 - Math.max(0, distanceFromCenter - 0.24) * 0.18
-        red *= vignette
-        green *= vignette
-        blue *= vignette
+      if (filterMode === 'fisheye') {
+        red = red * 1.04 + 4
+        green = green * 1.01 + 2
+        blue = blue * 1.06 + 5
+
+        const noise = (Math.random() - 0.5) * (8 + manualGrain)
+        red += noise
+        green += noise
+        blue += noise
       }
 
       if (filterMode === 'original' && grain > 0) {
@@ -288,12 +354,51 @@ function applyPreset(
   context.putImageData(imageData, 0, 0)
 }
 
+function formatTimestamp(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const year = date.getFullYear()
+
+  const rawHour = date.getHours()
+  const hour = rawHour % 12 || 12
+  const minute = String(date.getMinutes()).padStart(2, '0')
+  const second = String(date.getSeconds()).padStart(2, '0')
+  const meridiem = rawHour >= 12 ? 'PM' : 'AM'
+
+  return `${month}-${day}-${year}   ${hour}:${minute}:${second} ${meridiem}`
+}
+
+function drawTimestamp(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  timestamp: Date
+): void {
+  const text = formatTimestamp(timestamp)
+  const fontSize = Math.max(13, Math.round(width * 0.022))
+  const padding = Math.max(14, Math.round(width * 0.03))
+
+  context.save()
+  context.font = `bold ${fontSize}px "Courier New", monospace`
+  context.textAlign = 'left'
+  context.textBaseline = 'bottom'
+
+  context.lineWidth = Math.max(2, Math.round(fontSize * 0.13))
+  context.strokeStyle = 'rgba(10, 10, 9, 0.88)'
+  context.fillStyle = 'rgba(239, 239, 228, 0.96)'
+
+  context.strokeText(text, padding, height - padding)
+  context.fillText(text, padding, height - padding)
+  context.restore()
+}
+
 function renderFrame(
   video: HTMLVideoElement,
   canvas: HTMLCanvasElement,
   width: number,
   height: number,
-  settings: RenderSettings
+  settings: RenderSettings,
+  timestamp: Date
 ): void {
   canvas.width = width
   canvas.height = height
@@ -338,10 +443,13 @@ function renderFrame(
     settings.grain
   )
 
-  // Upscale without smoothing: the exact source of VYNT's pixel texture.
   finalContext.imageSmoothingEnabled = false
   finalContext.clearRect(0, 0, width, height)
   finalContext.drawImage(workingCanvas, 0, 0, width, height)
+
+  if (settings.dateImprint) {
+    drawTimestamp(finalContext, width, height, timestamp)
+  }
 }
 
 function App(): React.JSX.Element {
@@ -352,10 +460,12 @@ function App(): React.JSX.Element {
   const lastFrameTimeRef = useRef(0)
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
+  const [aspectMode, setAspectMode] = useState<AspectMode>('16:9')
   const [filterMode, setFilterMode] = useState<FilterMode>('vyntage')
   const [pixelSize, setPixelSize] = useState(3)
   const [grain, setGrain] = useState(34)
   const [zoom, setZoom] = useState(1)
+  const [dateImprint, setDateImprint] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [captureMessage, setCaptureMessage] = useState<CaptureMessage | null>(null)
   const [isCapturing, setIsCapturing] = useState(false)
@@ -365,7 +475,9 @@ function App(): React.JSX.Element {
     filterMode,
     pixelSize,
     grain,
-    zoom
+    zoom,
+    aspectMode,
+    dateImprint
   }
 
   const stopPreviewRender = (): void => {
@@ -403,6 +515,7 @@ function App(): React.JSX.Element {
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
+          aspectRatio: { ideal: 16 / 9 },
           facingMode: 'user'
         }
       })
@@ -450,14 +563,17 @@ function App(): React.JSX.Element {
         text: `Developing ${getFilterLabel(filterMode)} photo…`
       })
 
+      const dimensions = getDimensions(aspectMode, 'capture')
       const captureCanvas = document.createElement('canvas')
+      const capturedAt = new Date()
 
       renderFrame(
         video,
         captureCanvas,
-        CAPTURE_WIDTH,
-        CAPTURE_HEIGHT,
-        renderSettings
+        dimensions.width,
+        dimensions.height,
+        renderSettings,
+        capturedAt
       )
 
       const imageDataUrl = captureCanvas.toDataURL('image/png')
@@ -503,6 +619,8 @@ function App(): React.JSX.Element {
       return
     }
 
+    const dimensions = getDimensions(aspectMode, 'preview')
+
     const renderPreview = (time: number): void => {
       const video = videoRef.current
       const canvas = previewCanvasRef.current
@@ -516,7 +634,14 @@ function App(): React.JSX.Element {
         lastFrameTimeRef.current = time
 
         try {
-          renderFrame(video, canvas, PREVIEW_WIDTH, PREVIEW_HEIGHT, renderSettings)
+          renderFrame(
+            video,
+            canvas,
+            dimensions.width,
+            dimensions.height,
+            renderSettings,
+            new Date()
+          )
         } catch (error) {
           console.error('Unable to render VYNT preview:', error)
         }
@@ -530,7 +655,7 @@ function App(): React.JSX.Element {
     return () => {
       stopPreviewRender()
     }
-  }, [cameraStatus, filterMode, pixelSize, grain, zoom])
+  }, [cameraStatus, aspectMode, filterMode, pixelSize, grain, zoom, dateImprint])
 
   useEffect(() => {
     return () => {
@@ -550,7 +675,7 @@ function App(): React.JSX.Element {
 
   return (
     <main className="app-shell">
-      <section className="camera-frame">
+      <section className="camera-frame" style={{ maxWidth: '980px' }}>
         <header className="top-bar">
           <div className="brand">
             <span className="brand-mark">V</span>
@@ -573,7 +698,13 @@ function App(): React.JSX.Element {
           </div>
         </header>
 
-        <div className="viewfinder">
+        <div
+          className="viewfinder"
+          style={{
+            minHeight: 0,
+            aspectRatio: aspectMode === '16:9' ? '16 / 9' : '4 / 3'
+          }}
+        >
           <video ref={videoRef} className="source-video" muted playsInline />
 
           <canvas
@@ -599,10 +730,38 @@ function App(): React.JSX.Element {
 
           <div className="viewfinder-overlay">
             <span>REC</span>
-            <span>4:3</span>
+            <span>{aspectMode}</span>
           </div>
 
           <div className="focus-box" />
+
+          <div
+            style={{
+              position: 'absolute',
+              zIndex: 4,
+              top: '46px',
+              left: '20px',
+              display: 'flex',
+              overflow: 'hidden',
+              border: '1px solid rgba(238, 232, 220, 0.22)',
+              borderRadius: '5px',
+              background: 'rgba(17, 17, 15, 0.84)'
+            }}
+          >
+            {(['16:9', '4:3'] as AspectMode[]).map((aspect) => (
+              <button
+                key={aspect}
+                className={`filter-button ${
+                  aspectMode === aspect ? 'filter-button-active' : ''
+                }`}
+                type="button"
+                onClick={() => setAspectMode(aspect)}
+                disabled={isCapturing}
+              >
+                {aspect}
+              </button>
+            ))}
+          </div>
 
           <div className="filter-dock" aria-label="VYNT filter modes">
             {FILTERS.map((filter) => (
@@ -638,7 +797,7 @@ function App(): React.JSX.Element {
 
             <label className="texture-control">
               <span>
-                PIXEL SIZE <strong>{pixelSize}</strong>
+                PIXEL <strong>{pixelSize}</strong>
               </span>
               <input
                 type="range"
@@ -662,6 +821,18 @@ function App(): React.JSX.Element {
                 step="1"
                 value={grain}
                 onChange={(event) => setGrain(Number(event.target.value))}
+                disabled={isCapturing}
+              />
+            </label>
+
+            <label className="texture-control">
+              <span>
+                DATE IMPRINT <strong>{dateImprint ? 'ON' : 'OFF'}</strong>
+              </span>
+              <input
+                type="checkbox"
+                checked={dateImprint}
+                onChange={(event) => setDateImprint(event.target.checked)}
                 disabled={isCapturing}
               />
             </label>
