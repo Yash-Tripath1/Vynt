@@ -19,6 +19,7 @@ type RenderSettings = {
   filterMode: FilterMode
   pixelSize: number
   grain: number
+  zoom: number
 }
 
 const PREVIEW_WIDTH = 640
@@ -51,33 +52,47 @@ function getFilterShortLabel(filterMode: FilterMode): string {
   return FILTERS.find((filter) => filter.id === filterMode)?.shortLabel ?? 'RAW'
 }
 
+/*
+  Pixel settings now use a gentle curve:
+  - 1–5: subtle, believable old-camera texture
+  - 6–10: clearly chunky
+  - 11–14: intentionally wrecked / low-resolution
+*/
+function getEffectivePixelSize(pixelSize: number): number {
+  return 1 + Math.pow(pixelSize - 1, 1.45) * 0.22
+}
+
 function drawMirroredCover(
   context: CanvasRenderingContext2D,
   video: HTMLVideoElement,
   targetWidth: number,
-  targetHeight: number
+  targetHeight: number,
+  zoom: number
 ): void {
   const sourceWidth = video.videoWidth
   const sourceHeight = video.videoHeight
   const sourceAspectRatio = sourceWidth / sourceHeight
   const targetAspectRatio = targetWidth / targetHeight
 
-  let sourceX = 0
-  let sourceY = 0
   let cropWidth = sourceWidth
   let cropHeight = sourceHeight
 
   if (sourceAspectRatio > targetAspectRatio) {
     cropWidth = sourceHeight * targetAspectRatio
-    sourceX = (sourceWidth - cropWidth) / 2
   } else {
     cropHeight = sourceWidth / targetAspectRatio
-    sourceY = (sourceHeight - cropHeight) / 2
   }
+
+  // Digital zoom works by taking a smaller centre crop from the source image.
+  cropWidth /= zoom
+  cropHeight /= zoom
+
+  const sourceX = (sourceWidth - cropWidth) / 2
+  const sourceY = (sourceHeight - cropHeight) / 2
 
   context.clearRect(0, 0, targetWidth, targetHeight)
 
-  // VYNT mirrors photos so the saved image matches the viewfinder.
+  // Mirror the image so exports match the VYNT live viewfinder.
   context.save()
   context.translate(targetWidth, 0)
   context.scale(-1, 1)
@@ -115,11 +130,15 @@ function applyPreset(
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const pixelIndex = (y * width + x) * 4
+      const index = (y * width + x) * 4
+      const leftX = Math.max(0, x - 1)
+      const rightX = Math.min(width - 1, x + 1)
+      const leftIndex = (y * width + leftX) * 4
+      const rightIndex = (y * width + rightX) * 4
 
-      let red = original[pixelIndex]
-      let green = original[pixelIndex + 1]
-      let blue = original[pixelIndex + 2]
+      let red = original[index]
+      let green = original[index + 1]
+      let blue = original[index + 2]
 
       const luminance = red * 0.299 + green * 0.587 + blue * 0.114
       const normalizedX = (x - width / 2) / (width / 2)
@@ -129,28 +148,24 @@ function applyPreset(
       )
 
       if (filterMode === 'vyntage') {
-        // VYNTAGE: faded 1990s point-and-shoot / disposable-camera memory.
+        // VYNTAGE: faded 1990s point-and-shoot / disposable-camera feeling.
         red = red * 1.1 + 15
         green = green * 1.01 + 7
         blue = blue * 0.8 + 1
 
-        // Faded, imperfect colours instead of hyper-modern saturation.
         red = luminance + (red - luminance) * 0.84
         green = luminance + (green - luminance) * 0.79
         blue = luminance + (blue - luminance) * 0.7
 
-        // Lift the blacks and soften contrast for the aged-print feeling.
         red = (red - 128) * 0.87 + 138
         green = (green - 128) * 0.85 + 134
         blue = (blue - 128) * 0.82 + 127
 
-        // Dusty film texture.
         const noise = (Math.random() - 0.5) * (15 + manualGrain)
         red += noise * 1.1
         green += noise * 0.93
         blue += noise * 0.72
 
-        // A soft old-lens vignette.
         const vignette = 1 - Math.max(0, distanceFromCenter - 0.2) * 0.2
         red *= vignette
         green *= vignette
@@ -158,13 +173,8 @@ function applyPreset(
       }
 
       if (filterMode === 'digicam') {
-        const leftX = Math.max(0, x - 1)
-        const rightX = Math.min(width - 1, x + 1)
-        const leftIndex = (y * width + leftX) * 4
-        const rightIndex = (y * width + rightX) * 4
-
         red = original[leftIndex]
-        green = original[pixelIndex + 1]
+        green = original[index + 1]
         blue = original[rightIndex + 2]
 
         red = red * 1.08 + 7
@@ -212,14 +222,14 @@ function applyPreset(
       }
 
       if (filterMode === 'vhs') {
-        const leftX = Math.max(0, x - 2)
-        const rightX = Math.min(width - 1, x + 2)
-        const leftIndex = (y * width + leftX) * 4
-        const rightIndex = (y * width + rightX) * 4
+        const tapeLeftX = Math.max(0, x - 2)
+        const tapeRightX = Math.min(width - 1, x + 2)
+        const tapeLeftIndex = (y * width + tapeLeftX) * 4
+        const tapeRightIndex = (y * width + tapeRightX) * 4
 
-        red = original[leftIndex]
-        green = original[pixelIndex + 1]
-        blue = original[rightIndex + 2]
+        red = original[tapeLeftIndex]
+        green = original[index + 1]
+        blue = original[tapeRightIndex + 2]
 
         const mutedLuminance = red * 0.299 + green * 0.587 + blue * 0.114
         red = mutedLuminance + (red - mutedLuminance) * 0.72 + 4
@@ -261,7 +271,6 @@ function applyPreset(
         blue *= vignette
       }
 
-      // Grain can also be used with ORIGINAL mode.
       if (filterMode === 'original' && grain > 0) {
         const noise = (Math.random() - 0.5) * manualGrain
         red += noise
@@ -269,10 +278,10 @@ function applyPreset(
         blue += noise
       }
 
-      data[pixelIndex] = clamp(red)
-      data[pixelIndex + 1] = clamp(green)
-      data[pixelIndex + 2] = clamp(blue)
-      data[pixelIndex + 3] = 255
+      data[index] = clamp(red)
+      data[index + 1] = clamp(green)
+      data[index + 2] = clamp(blue)
+      data[index + 3] = 255
     }
   }
 
@@ -289,14 +298,16 @@ function renderFrame(
   canvas.width = width
   canvas.height = height
 
-  const context = canvas.getContext('2d')
+  const finalContext = canvas.getContext('2d')
 
-  if (!context) {
+  if (!finalContext) {
     throw new Error('VYNT could not create an image-rendering canvas.')
   }
 
-  const workingWidth = Math.max(1, Math.floor(width / settings.pixelSize))
-  const workingHeight = Math.max(1, Math.floor(height / settings.pixelSize))
+  const effectivePixelSize = getEffectivePixelSize(settings.pixelSize)
+  const workingWidth = Math.max(1, Math.floor(width / effectivePixelSize))
+  const workingHeight = Math.max(1, Math.floor(height / effectivePixelSize))
+
   const workingCanvas = document.createElement('canvas')
   workingCanvas.width = workingWidth
   workingCanvas.height = workingHeight
@@ -310,7 +321,15 @@ function renderFrame(
   }
 
   workingContext.imageSmoothingEnabled = false
-  drawMirroredCover(workingContext, video, workingWidth, workingHeight)
+
+  drawMirroredCover(
+    workingContext,
+    video,
+    workingWidth,
+    workingHeight,
+    settings.zoom
+  )
+
   applyPreset(
     workingContext,
     workingWidth,
@@ -319,10 +338,10 @@ function renderFrame(
     settings.grain
   )
 
-  // Enlarging a lower-resolution image with smoothing off creates true pixel blocks.
-  context.imageSmoothingEnabled = false
-  context.clearRect(0, 0, width, height)
-  context.drawImage(workingCanvas, 0, 0, width, height)
+  // Upscale without smoothing: the exact source of VYNT's pixel texture.
+  finalContext.imageSmoothingEnabled = false
+  finalContext.clearRect(0, 0, width, height)
+  finalContext.drawImage(workingCanvas, 0, 0, width, height)
 }
 
 function App(): React.JSX.Element {
@@ -336,6 +355,7 @@ function App(): React.JSX.Element {
   const [filterMode, setFilterMode] = useState<FilterMode>('vyntage')
   const [pixelSize, setPixelSize] = useState(3)
   const [grain, setGrain] = useState(34)
+  const [zoom, setZoom] = useState(1)
   const [errorMessage, setErrorMessage] = useState('')
   const [captureMessage, setCaptureMessage] = useState<CaptureMessage | null>(null)
   const [isCapturing, setIsCapturing] = useState(false)
@@ -344,7 +364,8 @@ function App(): React.JSX.Element {
   const renderSettings: RenderSettings = {
     filterMode,
     pixelSize,
-    grain
+    grain,
+    zoom
   }
 
   const stopPreviewRender = (): void => {
@@ -509,7 +530,7 @@ function App(): React.JSX.Element {
     return () => {
       stopPreviewRender()
     }
-  }, [cameraStatus, filterMode, pixelSize, grain])
+  }, [cameraStatus, filterMode, pixelSize, grain, zoom])
 
   useEffect(() => {
     return () => {
@@ -599,7 +620,22 @@ function App(): React.JSX.Element {
             ))}
           </div>
 
-          <div className="texture-panel" aria-label="VYNT texture controls">
+          <div className="texture-panel" aria-label="VYNT camera controls">
+            <label className="texture-control">
+              <span>
+                ZOOM <strong>{zoom.toFixed(1)}X</strong>
+              </span>
+              <input
+                type="range"
+                min="1"
+                max="3"
+                step="0.1"
+                value={zoom}
+                onChange={(event) => setZoom(Number(event.target.value))}
+                disabled={isCapturing}
+              />
+            </label>
+
             <label className="texture-control">
               <span>
                 PIXEL SIZE <strong>{pixelSize}</strong>
