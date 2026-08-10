@@ -67,12 +67,6 @@ function getDimensions(aspectMode: AspectMode, quality: 'preview' | 'capture'): 
     : { width: 1200, height: 900 }
 }
 
-/*
-  Low slider values remain subtle.
-  1–5 = believable old-camera texture.
-  6–10 = visibly chunky.
-  11–14 = deliberately wrecked.
-*/
 function getEffectivePixelSize(pixelSize: number): number {
   return 1 + Math.pow(pixelSize - 1, 1.45) * 0.22
 }
@@ -105,7 +99,6 @@ function drawMirroredCover(
   const sourceY = (sourceHeight - cropHeight) / 2
 
   context.clearRect(0, 0, targetWidth, targetHeight)
-
   context.save()
   context.translate(targetWidth, 0)
   context.scale(-1, 1)
@@ -133,7 +126,6 @@ function applyFisheye(
   const imageData = context.getImageData(0, 0, width, height)
   const source = new Uint8ClampedArray(imageData.data)
   const output = imageData.data
-
   const centerX = width / 2
   const centerY = height / 2
 
@@ -152,13 +144,10 @@ function applyFisheye(
         continue
       }
 
-      // Curves and expands the middle of the image like a cheap fisheye lens.
       const sourceRadius = Math.pow(radius, 1.55)
       const angle = Math.atan2(normalizedY, normalizedX)
-
       const sourceX = Math.round(centerX + Math.cos(angle) * sourceRadius * centerX)
       const sourceY = Math.round(centerY + Math.sin(angle) * sourceRadius * centerY)
-
       const safeX = Math.max(0, Math.min(width - 1, sourceX))
       const safeY = Math.max(0, Math.min(height - 1, sourceY))
       const sourceIndex = (safeY * width + safeX) * 4
@@ -279,10 +268,6 @@ function applyPreset(
         red += noise
         green += noise * 0.85
         blue += noise * 1.22
-
-        red = (red - 128) * 1.24 + 128
-        green = (green - 128) * 1.19 + 128
-        blue = (blue - 128) * 1.17 + 128
       }
 
       if (filterMode === 'vhs') {
@@ -382,11 +367,9 @@ function drawTimestamp(
   context.font = `bold ${fontSize}px "Courier New", monospace`
   context.textAlign = 'left'
   context.textBaseline = 'bottom'
-
   context.lineWidth = Math.max(2, Math.round(fontSize * 0.13))
   context.strokeStyle = 'rgba(10, 10, 9, 0.88)'
   context.fillStyle = 'rgba(239, 239, 228, 0.96)'
-
   context.strokeText(text, padding, height - padding)
   context.fillText(text, padding, height - padding)
   context.restore()
@@ -458,6 +441,8 @@ function App(): React.JSX.Element {
   const streamRef = useRef<MediaStream | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const lastFrameTimeRef = useRef(0)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const recordingChunksRef = useRef<Blob[]>([])
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
   const [aspectMode, setAspectMode] = useState<AspectMode>('16:9')
@@ -470,6 +455,8 @@ function App(): React.JSX.Element {
   const [captureMessage, setCaptureMessage] = useState<CaptureMessage | null>(null)
   const [isCapturing, setIsCapturing] = useState(false)
   const [photoCount, setPhotoCount] = useState(0)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingSeconds, setRecordingSeconds] = useState(0)
 
   const renderSettings: RenderSettings = {
     filterMode,
@@ -483,13 +470,17 @@ function App(): React.JSX.Element {
   const stopPreviewRender = (): void => {
     if (animationFrameRef.current !== null) {
       cancelAnimationFrame(animationFrameRef.current)
-      animationFrameRef.current = null
     }
+
+    animationFrameRef.current = null
   }
 
   const stopCamera = (): void => {
-    stopPreviewRender()
+    if (recorderRef.current?.state === 'recording') {
+      recorderRef.current.stop()
+    }
 
+    stopPreviewRender()
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
 
@@ -498,17 +489,12 @@ function App(): React.JSX.Element {
     }
 
     setCameraStatus('idle')
-    setCaptureMessage({
-      tone: 'neutral',
-      text: 'Camera turned off.'
-    })
   }
 
   const startCamera = async (): Promise<void> => {
     try {
       setCameraStatus('starting')
       setErrorMessage('')
-      setCaptureMessage(null)
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -529,18 +515,10 @@ function App(): React.JSX.Element {
 
       setCameraStatus('live')
     } catch (error) {
-      console.error('Unable to start camera:', error)
-
-      if (error instanceof DOMException && error.name === 'NotAllowedError') {
-        setErrorMessage(
-          'Camera access was blocked. Allow VYNT to use your camera in Windows Settings, then try again.'
-        )
-      } else if (error instanceof DOMException && error.name === 'NotFoundError') {
-        setErrorMessage('No camera was found. Check that your webcam is connected and enabled.')
-      } else {
-        setErrorMessage('VYNT could not start the camera. Close any other app using it and try again.')
-      }
-
+      console.error(error)
+      setErrorMessage(
+        'VYNT could not access the camera. Check Windows camera permission and close other camera apps.'
+      )
       setCameraStatus('error')
     }
   }
@@ -548,11 +526,7 @@ function App(): React.JSX.Element {
   const capturePhoto = async (): Promise<void> => {
     const video = videoRef.current
 
-    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
-      setCaptureMessage({
-        tone: 'error',
-        text: 'The camera frame is not ready yet. Try again in a moment.'
-      })
+    if (!video || video.videoWidth === 0) {
       return
     }
 
@@ -560,30 +534,28 @@ function App(): React.JSX.Element {
       setIsCapturing(true)
       setCaptureMessage({
         tone: 'neutral',
-        text: `Developing ${getFilterLabel(filterMode)} photo…`
+        text: 'Developing photo…'
       })
 
       const dimensions = getDimensions(aspectMode, 'capture')
-      const captureCanvas = document.createElement('canvas')
-      const capturedAt = new Date()
+      const canvas = document.createElement('canvas')
 
       renderFrame(
         video,
-        captureCanvas,
+        canvas,
         dimensions.width,
         dimensions.height,
         renderSettings,
-        capturedAt
+        new Date()
       )
 
-      const imageDataUrl = captureCanvas.toDataURL('image/png')
-      const result = await window.vynt.savePhoto(imageDataUrl)
+      const result = await window.vynt.savePhoto(canvas.toDataURL('image/png'))
 
-      if (result.saved && result.filePath) {
+      if (result.saved) {
         setPhotoCount((count) => count + 1)
         setCaptureMessage({
           tone: 'success',
-          text: `Saved ${getFilterLabel(filterMode)} photo: ${result.filePath}`
+          text: `Saved ${getFilterLabel(filterMode)} photo.`
         })
       } else {
         setCaptureMessage({
@@ -592,27 +564,101 @@ function App(): React.JSX.Element {
         })
       }
     } catch (error) {
-      console.error('Unable to capture photo:', error)
+      console.error(error)
 
       setCaptureMessage({
         tone: 'error',
-        text: 'VYNT could not save that photo. Please try again.'
+        text: 'VYNT could not save that photo.'
       })
     } finally {
       setIsCapturing(false)
     }
   }
 
-  const handleShutter = (): void => {
-    if (cameraStatus === 'live') {
-      void capturePhoto()
+  const startRecording = (): void => {
+    const canvas = previewCanvasRef.current
+
+    if (!canvas || cameraStatus !== 'live') {
       return
     }
 
-    if (cameraStatus !== 'starting') {
-      void startCamera()
+    const stream = canvas.captureStream(30)
+
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+      ? 'video/webm;codecs=vp9'
+      : 'video/webm'
+
+    const recorder = new MediaRecorder(stream, {
+      mimeType,
+      videoBitsPerSecond: 5_000_000
+    })
+
+    recordingChunksRef.current = []
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        recordingChunksRef.current.push(event.data)
+      }
+    }
+
+    recorder.onstop = async () => {
+      try {
+        const blob = new Blob(recordingChunksRef.current, {
+          type: mimeType
+        })
+
+        const result = await window.vynt.saveVideo(await blob.arrayBuffer())
+
+        setCaptureMessage(
+          result.saved
+            ? {
+                tone: 'success',
+                text: 'Video saved as WebM.'
+              }
+            : {
+                tone: 'neutral',
+                text: 'Video save cancelled.'
+              }
+        )
+      } catch (error) {
+        console.error(error)
+
+        setCaptureMessage({
+          tone: 'error',
+          text: 'VYNT could not save the video.'
+        })
+      }
+
+      stream.getTracks().forEach((track) => track.stop())
+      setIsRecording(false)
+      setRecordingSeconds(0)
+    }
+
+    recorderRef.current = recorder
+    recorder.start(1000)
+    setIsRecording(true)
+    setRecordingSeconds(0)
+  }
+
+  const stopRecording = (): void => {
+    if (recorderRef.current?.state === 'recording') {
+      recorderRef.current.stop()
     }
   }
+
+  useEffect(() => {
+    if (!isRecording) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setRecordingSeconds((seconds) => seconds + 1)
+    }, 1000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [isRecording])
 
   useEffect(() => {
     if (cameraStatus !== 'live') {
@@ -643,7 +689,7 @@ function App(): React.JSX.Element {
             new Date()
           )
         } catch (error) {
-          console.error('Unable to render VYNT preview:', error)
+          console.error(error)
         }
       }
 
@@ -652,9 +698,7 @@ function App(): React.JSX.Element {
 
     animationFrameRef.current = requestAnimationFrame(renderPreview)
 
-    return () => {
-      stopPreviewRender()
-    }
+    return stopPreviewRender
   }, [cameraStatus, aspectMode, filterMode, pixelSize, grain, zoom, dateImprint])
 
   useEffect(() => {
@@ -673,9 +717,14 @@ function App(): React.JSX.Element {
           ? 'CAMERA ERROR'
           : 'STANDBY'
 
+  const formattedTime = `${String(Math.floor(recordingSeconds / 60)).padStart(
+    2,
+    '0'
+  )}:${String(recordingSeconds % 60).padStart(2, '0')}`
+
   return (
     <main className="app-shell">
-      <section className="camera-frame" style={{ maxWidth: '980px' }}>
+      <section className="camera-frame">
         <header className="top-bar">
           <div className="brand">
             <span className="brand-mark">V</span>
@@ -684,12 +733,12 @@ function App(): React.JSX.Element {
 
           <div className={`status status-${cameraStatus.toLowerCase()}`}>
             <span className="status-dot" />
-            {statusText}
+            {isRecording ? `REC ${formattedTime}` : statusText}
           </div>
 
           <div className="top-actions">
             {cameraStatus === 'live' && (
-              <button className="power-button" type="button" onClick={stopCamera}>
+              <button className="power-button" onClick={stopCamera}>
                 TURN OFF
               </button>
             )}
@@ -701,7 +750,6 @@ function App(): React.JSX.Element {
         <div
           className="viewfinder"
           style={{
-            minHeight: 0,
             aspectRatio: aspectMode === '16:9' ? '16 / 9' : '4 / 3'
           }}
         >
@@ -709,13 +757,14 @@ function App(): React.JSX.Element {
 
           <canvas
             ref={previewCanvasRef}
-            className={`camera-canvas ${cameraStatus === 'live' ? 'camera-canvas-visible' : ''}`}
+            className={`camera-canvas ${
+              cameraStatus === 'live' ? 'camera-canvas-visible' : ''
+            }`}
           />
 
           {cameraStatus !== 'live' && (
             <div className="viewfinder-empty">
               <div className="viewfinder-icon">◉</div>
-
               <p>
                 {cameraStatus === 'starting'
                   ? 'Opening camera…'
@@ -723,120 +772,16 @@ function App(): React.JSX.Element {
                     ? 'Camera unavailable'
                     : 'Camera is standing by'}
               </p>
-
-              {cameraStatus === 'error' && <small>{errorMessage}</small>}
+              {errorMessage && <small>{errorMessage}</small>}
             </div>
           )}
 
           <div className="viewfinder-overlay">
-            <span>REC</span>
+            <span>{isRecording ? '● REC' : 'REC'}</span>
             <span>{aspectMode}</span>
           </div>
 
           <div className="focus-box" />
-
-          <div
-            style={{
-              position: 'absolute',
-              zIndex: 4,
-              top: '46px',
-              left: '20px',
-              display: 'flex',
-              overflow: 'hidden',
-              border: '1px solid rgba(238, 232, 220, 0.22)',
-              borderRadius: '5px',
-              background: 'rgba(17, 17, 15, 0.84)'
-            }}
-          >
-            {(['16:9', '4:3'] as AspectMode[]).map((aspect) => (
-              <button
-                key={aspect}
-                className={`filter-button ${
-                  aspectMode === aspect ? 'filter-button-active' : ''
-                }`}
-                type="button"
-                onClick={() => setAspectMode(aspect)}
-                disabled={isCapturing}
-              >
-                {aspect}
-              </button>
-            ))}
-          </div>
-
-          <div className="filter-dock" aria-label="VYNT filter modes">
-            {FILTERS.map((filter) => (
-              <button
-                key={filter.id}
-                className={`filter-button ${
-                  filterMode === filter.id ? 'filter-button-active' : ''
-                }`}
-                type="button"
-                onClick={() => setFilterMode(filter.id)}
-                disabled={isCapturing}
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="texture-panel" aria-label="VYNT camera controls">
-            <label className="texture-control">
-              <span>
-                ZOOM <strong>{zoom.toFixed(1)}X</strong>
-              </span>
-              <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.1"
-                value={zoom}
-                onChange={(event) => setZoom(Number(event.target.value))}
-                disabled={isCapturing}
-              />
-            </label>
-
-            <label className="texture-control">
-              <span>
-                PIXEL <strong>{pixelSize}</strong>
-              </span>
-              <input
-                type="range"
-                min="1"
-                max="14"
-                step="1"
-                value={pixelSize}
-                onChange={(event) => setPixelSize(Number(event.target.value))}
-                disabled={isCapturing}
-              />
-            </label>
-
-            <label className="texture-control">
-              <span>
-                GRAIN <strong>{grain}</strong>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={grain}
-                onChange={(event) => setGrain(Number(event.target.value))}
-                disabled={isCapturing}
-              />
-            </label>
-
-            <label className="texture-control">
-              <span>
-                DATE IMPRINT <strong>{dateImprint ? 'ON' : 'OFF'}</strong>
-              </span>
-              <input
-                type="checkbox"
-                checked={dateImprint}
-                onChange={(event) => setDateImprint(event.target.checked)}
-                disabled={isCapturing}
-              />
-            </label>
-          </div>
 
           {captureMessage && (
             <div className={`capture-message capture-message-${captureMessage.tone}`}>
@@ -845,27 +790,133 @@ function App(): React.JSX.Element {
           )}
         </div>
 
-        <footer className="control-bar">
-          <div className="mode-readout">
-            <span className="control-label">MODE</span>
-            <strong>{filterMode === 'original' ? 'ORIGINAL' : 'FILTER'}</strong>
+        <section className="control-deck">
+          <div className="deck-section">
+            <span className="deck-label">FILTERS</span>
+
+            <div className="filter-row">
+              {FILTERS.map((filter) => (
+                <button
+                  key={filter.id}
+                  className={`filter-button ${
+                    filterMode === filter.id ? 'filter-button-active' : ''
+                  }`}
+                  onClick={() => setFilterMode(filter.id)}
+                  disabled={isCapturing || isRecording}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <button
-            className={`shutter-button ${isCapturing ? 'shutter-button-capturing' : ''}`}
-            type="button"
-            onClick={handleShutter}
-            disabled={cameraStatus === 'starting' || isCapturing}
-            aria-label={cameraStatus === 'live' ? 'Capture photo' : 'Start camera'}
-          >
-            <span />
-          </button>
+          <div className="deck-grid">
+            <div className="deck-section">
+              <span className="deck-label">FRAME</span>
 
-          <div className="mode-readout right-readout">
-            <span className="control-label">FILTER</span>
-            <strong>{getFilterShortLabel(filterMode)}</strong>
+              <div className="button-row">
+                {(['16:9', '4:3'] as AspectMode[]).map((aspect) => (
+                  <button
+                    key={aspect}
+                    className={`compact-button ${
+                      aspectMode === aspect ? 'compact-button-active' : ''
+                    }`}
+                    onClick={() => setAspectMode(aspect)}
+                  >
+                    {aspect}
+                  </button>
+                ))}
+
+                <button
+                  className={`compact-button ${
+                    dateImprint ? 'compact-button-active' : ''
+                  }`}
+                  onClick={() => setDateImprint((value) => !value)}
+                >
+                  DATE {dateImprint ? 'ON' : 'OFF'}
+                </button>
+              </div>
+            </div>
+
+            <div className="deck-section texture-section">
+              <span className="deck-label">TEXTURE</span>
+
+              <label className="texture-control">
+                <span>
+                  ZOOM <strong>{zoom.toFixed(1)}X</strong>
+                </span>
+                <input
+                  type="range"
+                  min="1"
+                  max="3"
+                  step="0.1"
+                  value={zoom}
+                  onChange={(event) => setZoom(Number(event.target.value))}
+                />
+              </label>
+
+              <label className="texture-control">
+                <span>
+                  PIXEL <strong>{pixelSize}</strong>
+                </span>
+                <input
+                  type="range"
+                  min="1"
+                  max="14"
+                  value={pixelSize}
+                  onChange={(event) => setPixelSize(Number(event.target.value))}
+                />
+              </label>
+
+              <label className="texture-control">
+                <span>
+                  GRAIN <strong>{grain}</strong>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={grain}
+                  onChange={(event) => setGrain(Number(event.target.value))}
+                />
+              </label>
+            </div>
           </div>
-        </footer>
+
+          <div className="action-row">
+            <div className="mode-readout">
+              <span className="control-label">MODE</span>
+              <strong>{filterMode === 'original' ? 'ORIGINAL' : 'FILTER'}</strong>
+            </div>
+
+            <button
+              className="shutter-button"
+              onClick={() =>
+                cameraStatus === 'live'
+                  ? void capturePhoto()
+                  : void startCamera()
+              }
+              disabled={cameraStatus === 'starting' || isCapturing}
+            >
+              <span />
+            </button>
+
+            <button
+              className={`record-button ${
+                isRecording ? 'record-button-active' : ''
+              }`}
+              onClick={isRecording ? stopRecording : startRecording}
+              disabled={cameraStatus !== 'live'}
+            >
+              {isRecording ? `STOP ${formattedTime}` : 'RECORD VIDEO'}
+            </button>
+
+            <div className="mode-readout right-readout">
+              <span className="control-label">FILTER</span>
+              <strong>{getFilterShortLabel(filterMode)}</strong>
+            </div>
+          </div>
+        </section>
       </section>
     </main>
   )
