@@ -22,6 +22,11 @@ function createCaptureFileName(): string {
   return `vynt-${timestamp}.png`
 }
 
+function createVideoFileName(): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return `vynt-video-${timestamp}.webm`
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1280,
@@ -62,7 +67,7 @@ app.whenReady().then(() => {
       throw new Error('VYNT received an invalid image capture.')
     }
 
-    const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
+    const { canceled, filePath } = await dialog.showSaveDialog({
       title: 'Save VYNT photo',
       defaultPath: createCaptureFileName(),
       filters: [
@@ -82,6 +87,33 @@ app.whenReady().then(() => {
 
     const base64Image = dataUrl.replace(/^data:image\/png;base64,/, '')
     await writeFile(filePath, Buffer.from(base64Image, 'base64'))
+
+    return {
+      saved: true,
+      filePath
+    }
+  })
+
+  ipcMain.handle('vynt:save-video', async (_event, videoData: ArrayBuffer) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: 'Save VYNT video',
+      defaultPath: createVideoFileName(),
+      filters: [
+        {
+          name: 'WebM video',
+          extensions: ['webm']
+        }
+      ]
+    })
+
+    if (canceled || !filePath) {
+      return {
+        saved: false,
+        filePath: null
+      }
+    }
+
+    await writeFile(filePath, Buffer.from(videoData))
 
     return {
       saved: true,

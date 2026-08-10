@@ -8,5 +8,12 @@ interface Window {
       saved: boolean
       filePath: string | null
     }>
+
+    saveVideo: (
+      videoData: ArrayBuffer
+    ) => Promise<{
+      saved: boolean
+      filePath: string | null
+    }>
   }
 }

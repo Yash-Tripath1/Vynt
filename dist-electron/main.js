@@ -13,6 +13,10 @@ function createCaptureFileName() {
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   return `vynt-${timestamp}.png`;
 }
+function createVideoFileName() {
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+  return `vynt-video-${timestamp}.webm`;
+}
 function createWindow() {
   win = new BrowserWindow({
     width: 1280,
@@ -47,7 +51,7 @@ app.whenReady().then(() => {
     if (!dataUrl.startsWith("data:image/png;base64,")) {
       throw new Error("VYNT received an invalid image capture.");
     }
-    const { canceled, filePath } = await dialog.showSaveDialog(win ?? void 0, {
+    const { canceled, filePath } = await dialog.showSaveDialog({
       title: "Save VYNT photo",
       defaultPath: createCaptureFileName(),
       filters: [
@@ -65,6 +69,29 @@ app.whenReady().then(() => {
     }
     const base64Image = dataUrl.replace(/^data:image\/png;base64,/, "");
     await writeFile(filePath, Buffer.from(base64Image, "base64"));
+    return {
+      saved: true,
+      filePath
+    };
+  });
+  ipcMain.handle("vynt:save-video", async (_event, videoData) => {
+    const { canceled, filePath } = await dialog.showSaveDialog({
+      title: "Save VYNT video",
+      defaultPath: createVideoFileName(),
+      filters: [
+        {
+          name: "WebM video",
+          extensions: ["webm"]
+        }
+      ]
+    });
+    if (canceled || !filePath) {
+      return {
+        saved: false,
+        filePath: null
+      };
+    }
+    await writeFile(filePath, Buffer.from(videoData));
     return {
       saved: true,
       filePath
