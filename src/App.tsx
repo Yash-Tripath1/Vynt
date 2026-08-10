@@ -8,6 +8,7 @@ type FilterMode =
   | 'vyntage'
   | 'digicam'
   | 'nightflash'
+  | 'neoncity'
   | 'fisheye'
   | 'vhs'
   | 'goldenfilm'
@@ -35,6 +36,7 @@ const FILTERS: Array<{
   { id: 'vyntage', label: 'VYNTAGE', shortLabel: 'VYNT' },
   { id: 'digicam', label: '2007 DIGICAM', shortLabel: '2007' },
   { id: 'nightflash', label: 'NIGHT FLASH', shortLabel: 'FLASH' },
+  { id: 'neoncity', label: 'NEON CITY', shortLabel: 'NEON' },
   { id: 'fisheye', label: 'FISHEYE', shortLabel: 'FISH' },
   { id: 'vhs', label: 'VHS TAPE', shortLabel: 'VHS' },
   { id: 'goldenfilm', label: 'GOLDEN FILM', shortLabel: 'FILM' }
@@ -270,6 +272,26 @@ function applyPreset(
         blue += noise * 1.22
       }
 
+      if (filterMode === 'neoncity') {
+        const splitX = Math.max(0, x - 2)
+        const splitIndex = (y * width + splitX) * 4
+        red = original[splitIndex] * 1.22 + 12
+        green = green * 0.9 + 2
+        blue = blue * 1.3 + 18
+        const neonLuminance = red * 0.299 + green * 0.587 + blue * 0.114
+        red = neonLuminance + (red - neonLuminance) * 1.38
+        green = neonLuminance + (green - neonLuminance) * 1.04
+        blue = neonLuminance + (blue - neonLuminance) * 1.46
+        red = (red - 128) * 1.15 + 118
+        green = (green - 128) * 1.18 + 110
+        blue = (blue - 128) * 1.18 + 132
+        const scanline = y % 4 < 2 ? 0.9 : 1.05
+        const noise = (Math.random() - 0.5) * (10 + manualGrain)
+        red = red * scanline + noise
+        green = green * scanline + noise * 0.7
+        blue = blue * scanline + noise * 1.2
+      }
+
       if (filterMode === 'vhs') {
         const tapeLeftX = Math.max(0, x - 2)
         const tapeRightX = Math.min(width - 1, x + 2)
@@ -455,6 +477,8 @@ function App(): React.JSX.Element {
   const [captureMessage, setCaptureMessage] = useState<CaptureMessage | null>(null)
   const [isCapturing, setIsCapturing] = useState(false)
   const [photoCount, setPhotoCount] = useState(0)
+  const [lastPhoto, setLastPhoto] = useState<string | null>(null)
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
 
@@ -549,10 +573,12 @@ function App(): React.JSX.Element {
         new Date()
       )
 
-      const result = await window.vynt.savePhoto(canvas.toDataURL('image/png'))
+      const imageDataUrl = canvas.toDataURL('image/png')
+      const result = await window.vynt.savePhoto(imageDataUrl)
 
       if (result.saved) {
         setPhotoCount((count) => count + 1)
+        setLastPhoto(imageDataUrl)
         setCaptureMessage({
           tone: 'success',
           text: `Saved ${getFilterLabel(filterMode)} photo.`
@@ -810,6 +836,13 @@ function App(): React.JSX.Element {
             </div>
           </div>
 
+          {lastPhoto && (
+            <button className="last-photo-button" onClick={() => setIsGalleryOpen(true)}>
+              <img src={lastPhoto} alt="Latest VYNT capture" />
+              <span>LAST PHOTO · VIEW</span>
+            </button>
+          )}
+
           <div className="deck-grid">
             <div className="deck-section">
               <span className="deck-label">FRAME</span>
@@ -918,6 +951,14 @@ function App(): React.JSX.Element {
           </div>
         </section>
       </section>
+      {isGalleryOpen && lastPhoto && (
+        <div className="gallery-modal" onClick={() => setIsGalleryOpen(false)}>
+          <div className="gallery-card" onClick={(event) => event.stopPropagation()}>
+            <header><span>VYNT · LAST CAPTURE</span><button onClick={() => setIsGalleryOpen(false)}>CLOSE ×</button></header>
+            <img src={lastPhoto} alt="Latest VYNT capture preview" />
+          </div>
+        </div>
+      )}
     </main>
   )
 }

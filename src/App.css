@@ -427,4 +427,11 @@ input {
     min-width: 110px;
     font-size: 0.58rem;
   }
-}
+}.last-photo-button { display:flex; align-items:center; gap:12px; margin:18px 0 0; width:100%; padding:8px; border:1px solid #524c42; border-radius:7px; color:#d9d0c2; background:#151512; cursor:pointer; font-size:.65rem; font-weight:800; letter-spacing:.1em; text-align:left; }
+.last-photo-button:hover { border-color:#d7b670; color:#fff; }
+.last-photo-button img { width:68px; height:46px; object-fit:cover; border-radius:3px; }
+.gallery-modal { position:fixed; z-index:20; inset:0; display:grid; place-items:center; padding:24px; background:#000c; backdrop-filter:blur(10px); }
+.gallery-card { width:min(900px,100%); max-height:90vh; overflow:auto; border:1px solid #655d50; border-radius:12px; background:#1b1916; box-shadow:0 24px 90px #000; }
+.gallery-card header { display:flex; align-items:center; justify-content:space-between; padding:15px 18px; color:#e7dfd2; font-size:.68rem; font-weight:900; letter-spacing:.13em; }
+.gallery-card header button { border:1px solid #655d50; border-radius:4px; padding:7px 9px; color:#e7dfd2; background:#292620; cursor:pointer; font-size:.62rem; font-weight:800; }
+.gallery-card img { display:block; width:100%; max-height:75vh; object-fit:contain; background:#0b0b09; }
