@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import './App.mobile.css'
+import { ASPECT_MODES, getCameraConstraints, getDimensions, getInitialAspectMode, type AspectMode } from './cameraLayout'
 import { mediaError, savePhoto } from './platform'
 import { useRecording } from './useRecording'
 
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
-type AspectMode = '16:9' | '4:3'
 type FilterMode =
   | 'original'
   | 'vyntage'
@@ -54,21 +55,6 @@ function getFilterLabel(filterMode: FilterMode): string {
 
 function getFilterShortLabel(filterMode: FilterMode): string {
   return FILTERS.find((filter) => filter.id === filterMode)?.shortLabel ?? 'RAW'
-}
-
-function getDimensions(aspectMode: AspectMode, quality: 'preview' | 'capture'): {
-  width: number
-  height: number
-} {
-  if (quality === 'preview') {
-    return aspectMode === '16:9'
-      ? { width: 640, height: 360 }
-      : { width: 640, height: 480 }
-  }
-
-  return aspectMode === '16:9'
-    ? { width: 1280, height: 720 }
-    : { width: 1200, height: 900 }
 }
 
 function getEffectivePixelSize(pixelSize: number): number {
@@ -468,7 +454,7 @@ function App(): React.JSX.Element {
   const cameraRequestRef = useRef(0)
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
-  const [aspectMode, setAspectMode] = useState<AspectMode>('16:9')
+  const [aspectMode, setAspectMode] = useState<AspectMode>(getInitialAspectMode)
   const [filterMode, setFilterMode] = useState<FilterMode>('vyntage')
   const [pixelSize, setPixelSize] = useState(3)
   const [grain, setGrain] = useState(34)
@@ -530,12 +516,7 @@ function App(): React.JSX.Element {
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          aspectRatio: { ideal: 16 / 9 },
-          facingMode: 'user'
-        }
+        video: getCameraConstraints(aspectMode)
       })
 
       if (request !== cameraRequestRef.current) {
@@ -711,7 +692,7 @@ function App(): React.JSX.Element {
         <div
           className="viewfinder"
           style={{
-            aspectRatio: aspectMode === '16:9' ? '16 / 9' : '4 / 3'
+            aspectRatio: aspectMode.replace(':', ' / ')
           }}
         >
           <video ref={videoRef} className="source-video" muted playsInline />
@@ -785,12 +766,13 @@ function App(): React.JSX.Element {
               <span className="deck-label">FRAME</span>
 
               <div className="button-row">
-                {(['16:9', '4:3'] as AspectMode[]).map((aspect) => (
+                {ASPECT_MODES.map((aspect) => (
                   <button
                     key={aspect}
                     className={`compact-button ${
                       aspectMode === aspect ? 'compact-button-active' : ''
-                    }`}
+                    } ${aspect === '3:4' && aspectMode !== '3:4' ? 'mobile-frame-option' : ''}`}
+                    title={aspect === '3:4' ? 'Portrait frame' : 'Landscape frame'}
                     onClick={() => setAspectMode(aspect)}
                     aria-pressed={aspectMode === aspect}
                     disabled={recording.busy}

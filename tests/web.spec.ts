@@ -132,3 +132,76 @@ test('mobile controls fit and camera off remains accessible', async ({ page }) =
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.getByRole('button', { name: 'TURN OFF' }).click()
 })
+
+for (const width of [320, 375, 430]) {
+  test(`phone ${width}px defaults to 4:3 with touch controls and no overflow`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 812 })
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: '4:3', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('button', { name: '3:4', exact: true })).toBeVisible()
+    const frame = (await page.locator('.viewfinder').boundingBox())!
+    expect(frame.width / frame.height).toBeCloseTo(4 / 3, 2)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    for (const name of ['16:9', '4:3', '3:4', 'MIC ON']) {
+      const button = (await page.getByRole('button', { name, exact: true }).boundingBox())!
+      expect(button.height).toBeGreaterThanOrEqual(44)
+    }
+    await page.getByRole('button', { name: '16:9', exact: true }).click()
+    await expect(page.getByRole('button', { name: '16:9', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  })
+}
+
+test('desktop keeps the 16:9 default and its original frame selector', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: '16:9', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: '3:4', exact: true })).toBeHidden()
+  const frame = (await page.locator('.viewfinder').boundingBox())!
+  expect(frame.width / frame.height).toBeCloseTo(16 / 9, 2)
+})
+
+test('portrait photo and video exports match the frame and survive rotation', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await page.goto('/')
+  await page.getByRole('button', { name: '3:4', exact: true }).click()
+  await page.getByRole('button', { name: 'Start camera', exact: true }).click()
+  await expect(page.locator('.camera-canvas')).toHaveAttribute('width', '480')
+  await expect(page.locator('.camera-canvas')).toHaveAttribute('height', '640')
+  const photoDownload = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Take photo', exact: true }).click()
+  const photo = await photoDownload
+  const png = await readFile((await photo.path())!)
+  // PNG IHDR stores the exact export dimensions at byte offsets 16 and 20.
+  expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([900, 1200])
+  await page.getByRole('button', { name: 'RECORD VIDEO', exact: true }).click()
+  await expect(page.getByRole('button', { name: /^STOP/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: '3:4', exact: true })).toBeDisabled()
+  await page.setViewportSize({ width: 812, height: 375 })
+  await expect(page.getByRole('button', { name: '3:4', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.camera-canvas')).toHaveAttribute('width', '480')
+  await expect(page.locator('.camera-canvas')).toHaveAttribute('height', '640')
+  await page.waitForTimeout(1800)
+  const videoDownload = page.waitForEvent('download')
+  await page.getByRole('button', { name: /^STOP/ }).click()
+  const video = await videoDownload
+  const bytes = await readFile((await video.path())!)
+  const decoded = await page.evaluate(async (base64) => {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'video/webm' }))
+    const element = document.createElement('video')
+    const audio = new AudioContext()
+    try {
+      element.src = url
+      await new Promise<void>((resolve, reject) => {
+        element.onloadeddata = () => resolve()
+        element.onerror = () => reject(new Error('Portrait video did not decode'))
+      })
+      const buffer = await audio.decodeAudioData(bytes.buffer)
+      const peak = buffer.getChannelData(0).reduce((peak, sample) => Math.max(peak, Math.abs(sample)), 0)
+      return { width: element.videoWidth, height: element.videoHeight, peak }
+    } finally { URL.revokeObjectURL(url); await audio.close() }
+  }, bytes.toString('base64'))
+  expect([decoded.width, decoded.height]).toEqual([480, 640])
+  expect(decoded.peak).toBeGreaterThan(0.001)
+  await page.getByRole('button', { name: 'TURN OFF' }).click()
+})
