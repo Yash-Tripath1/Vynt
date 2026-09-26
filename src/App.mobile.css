@@ -1,6 +1,6 @@
 /* Phone layout lives here; App.css remains the desktop/base theme.
    Crop and export dimensions live separately in cameraLayout.ts. */
-.mobile-frame-option { display: none; }
+/* Frame options stay visible at every width; only layout is responsive. */
 
 @media (max-width: 760px) {
   .app-shell {
@@ -35,7 +35,6 @@
   .deck-grid { grid-template-columns: 1fr; gap: 16px; margin-top: 16px; }
   .button-row { gap: 7px; }
   .compact-button { min-height: 44px; padding: 9px 10px; }
-  .mobile-frame-option { display: inline-block; }
 
   /* Three short sliders instead of a long vertical stack. */
   .texture-section { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }

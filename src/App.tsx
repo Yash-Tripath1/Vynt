@@ -771,7 +771,7 @@ function App(): React.JSX.Element {
                     key={aspect}
                     className={`compact-button ${
                       aspectMode === aspect ? 'compact-button-active' : ''
-                    } ${aspect === '3:4' && aspectMode !== '3:4' ? 'mobile-frame-option' : ''}`}
+                    }`}
                     title={aspect === '3:4' ? 'Portrait frame' : 'Landscape frame'}
                     onClick={() => setAspectMode(aspect)}
                     aria-pressed={aspectMode === aspect}

@@ -5,11 +5,11 @@ Prepared against your published repository commit `6a83da328a45823b993fbc34c1431
 ## Changes
 
 - Narrow portrait screens (up to 760 CSS px) initially use **4:3**, which is taller than 16:9 without making the controls excessively far away.
-- An optional **3:4 portrait frame** appears on small screens. Desktop starts at 16:9 and retains its original frame selector. If you select portrait then enlarge the window, that selected mode remains available rather than disappearing.
+- An optional **3:4 portrait frame** is visible on every screen size. Desktop still starts at 16:9; portrait is never forced. This removes a breakpoint-dependent visibility rule that could hide the button on phone browsers.
 - A user's selected ratio stays stable across resizing/rotation, especially while recording. This is intentionally not an auto-rotate feature.
 - Preview, PNG exports and video exports all use the same chosen aspect ratio, not a CSS-stretched image. Changing the ratio crops the camera feed; it does not distort it. Camera hardware may deliver a different aspect ratio from the requested ideal, which is then center-cropped.
 - Larger phone controls, compact side-by-side texture sliders, safe-area padding and swipeable filters.
-- Existing camera, microphone and save logic is preserved. No dependencies, workflows or app version were changed.
+- Existing camera, microphone and save logic is preserved. No dependencies, workflows or app version were changed. The CSS build target now preserves older media-query syntax; that does not establish full support for older browsers.
 
 ### Separate files
 
@@ -82,6 +82,6 @@ Use the actual new tag if your starting version is different. Never reuse the pu
 
 - Lint and TypeScript/build checks passed.
 - **11 Chromium browser tests passed**, including previous audio/download tests, 320/375/430 px layouts, desktop default selection, 900×1200 portrait PNG export, 480×640 video export with decodable non-silent microphone audio, and stable portrait recording dimensions after a viewport rotation.
-- The updated desktop standby screenshot at 1280px matched the live site's screenshot pixel-for-pixel during this check.
+- The initial mobile update preserved the desktop screenshot. The visibility fix deliberately adds one optional 3:4 button on desktop while preserving its default 16:9 frame.
 - Media devices were synthetic. Physical iPhone/Android cameras, Safari and real device rotation still need testing. This update does not claim new browser compatibility.
 - These local files have not been pushed or deployed on your behalf.

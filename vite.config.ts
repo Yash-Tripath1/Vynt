@@ -9,6 +9,9 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig(({ mode }) => ({
   // Relative assets work on GitHub Pages project paths and in Electron file URLs.
   base: './',
+  // Keep CSS media queries compatible with older mobile browser syntax.
+  // This is a CSS target, not a claim of full support on these browser versions.
+  build: { cssTarget: ['chrome87', 'edge88', 'firefox78', 'safari14'] },
   server: { host: '0.0.0.0', allowedHosts: ['.e2b.app'] },
   plugins: [
     react(),

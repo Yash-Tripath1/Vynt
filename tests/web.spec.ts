@@ -151,11 +151,11 @@ for (const width of [320, 375, 430]) {
   })
 }
 
-test('desktop keeps the 16:9 default and its original frame selector', async ({ page }) => {
+test('desktop keeps the 16:9 default and offers optional portrait framing', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/')
   await expect(page.getByRole('button', { name: '16:9', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByRole('button', { name: '3:4', exact: true })).toBeHidden()
+  await expect(page.getByRole('button', { name: '3:4', exact: true })).toBeVisible()
   const frame = (await page.locator('.viewfinder').boundingBox())!
   expect(frame.width / frame.height).toBeCloseTo(16 / 9, 2)
 })
