@@ -1,29 +1,23 @@
 import { defineConfig } from 'vite'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import electron from 'vite-plugin-electron/simple'
 import react from '@vitejs/plugin-react'
 
-// https://vitejs.dev/config/
-export default defineConfig({
+const root = path.dirname(fileURLToPath(import.meta.url))
+
+export default defineConfig(({ mode }) => ({
+  // Relative assets work on GitHub Pages project paths and in Electron file URLs.
+  base: './',
+  server: { host: '0.0.0.0', allowedHosts: ['.e2b.app'] },
   plugins: [
     react(),
-    electron({
-      main: {
-        // Shortcut of `build.lib.entry`.
-        entry: 'electron/main.ts',
-      },
+    ...(mode === 'web' ? [] : [electron({
+      main: { entry: 'electron/main.ts' },
       preload: {
-        // Shortcut of `build.rollupOptions.input`.
-        // Preload scripts may contain Web assets, so use the `build.rollupOptions.input` instead `build.lib.entry`.
-        input: path.join(__dirname, 'electron/preload.ts'),
+        input: path.join(root, 'electron/preload.ts'),
+        vite: { build: { rollupOptions: { output: { format: 'cjs', entryFileNames: 'preload.cjs' } } } },
       },
-      // Ployfill the Electron and Node.js API for Renderer process.
-      // If you want use Node.js in Renderer process, the `nodeIntegration` needs to be enabled in the Main process.
-      // See 👉 https://github.com/electron-vite/vite-plugin-electron-renderer
-      renderer: process.env.NODE_ENV === 'test'
-        // https://github.com/electron-vite/vite-plugin-electron-renderer/issues/78#issuecomment-2053600808
-        ? undefined
-        : {},
-    }),
+    })]),
   ],
-})
+}))

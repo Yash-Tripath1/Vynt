@@ -1,43 +1,31 @@
-// @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.yashtripathi.vynt",
+  "productName": "VYNT",
   "asar": true,
-  "productName": "YourAppName",
-  "directories": {
-    "output": "release/${version}"
-  },
-  "files": [
-    "dist",
-    "dist-electron"
-  ],
-  "mac": {
-    "target": [
-      "dmg"
-    ],
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
-  },
+  "compression": "maximum",
+  "directories": { "output": "release/${version}", "buildResources": "assets" },
+  "files": ["dist/**/*", "dist-electron/**/*", "!**/*.map"],
+  "electronLanguages": ["en-US"],
   "win": {
-    "target": [
-      {
-        "target": "nsis",
-        "arch": [
-          "x64"
-        ]
-      }
-    ],
+    "icon": "assets/vynt.ico",
+    "target": [{ "target": "nsis", "arch": ["x64"] }],
     "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
   },
   "nsis": {
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true,
-    "deleteAppDataOnUninstall": false
+    "deleteAppDataOnUninstall": false,
+    "createDesktopShortcut": "always",
+    "shortcutName": "VYNT"
   },
-  "linux": {
-    "target": [
-      "AppImage"
-    ],
-    "artifactName": "${productName}-Linux-${version}.${ext}"
-  }
+  "mac": {
+    "target": ["dmg"],
+    "extendInfo": {
+      "NSCameraUsageDescription": "VYNT uses your camera to create photos and videos locally on your device.",
+      "NSMicrophoneUsageDescription": "VYNT uses your microphone only when you choose to record video with MIC ON."
+    }
+  },
+  "linux": { "target": ["AppImage"], "icon": "public/vynt.png", "category": "Graphics" }
 }

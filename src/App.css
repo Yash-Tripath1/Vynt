@@ -435,3 +435,33 @@ input {
 .gallery-card header { display:flex; align-items:center; justify-content:space-between; padding:15px 18px; color:#e7dfd2; font-size:.68rem; font-weight:900; letter-spacing:.13em; }
 .gallery-card header button { border:1px solid #655d50; border-radius:4px; padding:7px 9px; color:#e7dfd2; background:#292620; cursor:pointer; font-size:.62rem; font-weight:800; }
 .gallery-card img { display:block; width:100%; max-height:75vh; object-fit:contain; background:#0b0b09; }
+
+/* Release polish: visible microphone controls, mobile power button, keyboard focus. */
+.app-shell { align-content: center; gap: 26px; }
+.audio-row { display: flex; align-items: center; gap: 12px; margin-top: 20px; color: #c8c0b3; font-size: .72rem; }
+.audio-row button { flex-shrink: 0; }
+.app-footer { width: min(100%, 1080px); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 14px; color: #bdb5a8; font-size: .75rem; }
+.app-footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
+.app-footer a { color: #d7b670; text-underline-offset: 4px; }
+.app-footer small { width: 100%; line-height: 1.6; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid #ffe0a0; outline-offset: 4px; }
+.capture-message { max-width: 90%; width: max-content; white-space: normal; text-align: center; line-height: 1.5; }
+.viewfinder-empty { max-width: 85%; padding: 12px; }
+.viewfinder-empty small { display: block; line-height: 1.5; }
+@media (max-width: 760px) {
+  .power-button { display: block; }
+  .top-bar { gap: 8px; }
+  .status { font-size: .55rem; letter-spacing: .05em; }
+  .brand { font-size: .9rem; gap: 7px; letter-spacing: .13em; }
+  .top-actions { gap: 0; }
+  .viewfinder-empty p { font-size: .7rem; }
+  .viewfinder-icon { font-size: 2rem; }
+  .focus-box { width: 65px; height: 65px; }
+  .app-footer { padding: 0 5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+.start-hint { font-size: .8rem; color: #d7b670; }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import { mediaError, savePhoto } from './platform'
+import { useRecording } from './useRecording'
 
 type CameraStatus = 'idle' | 'starting' | 'live' | 'error'
 type AspectMode = '16:9' | '4:3'
@@ -405,8 +407,8 @@ function renderFrame(
   settings: RenderSettings,
   timestamp: Date
 ): void {
-  canvas.width = width
-  canvas.height = height
+  if (canvas.width !== width) canvas.width = width
+  if (canvas.height !== height) canvas.height = height
 
   const finalContext = canvas.getContext('2d')
 
@@ -463,8 +465,7 @@ function App(): React.JSX.Element {
   const streamRef = useRef<MediaStream | null>(null)
   const animationFrameRef = useRef<number | null>(null)
   const lastFrameTimeRef = useRef(0)
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const recordingChunksRef = useRef<Blob[]>([])
+  const cameraRequestRef = useRef(0)
 
   const [cameraStatus, setCameraStatus] = useState<CameraStatus>('idle')
   const [aspectMode, setAspectMode] = useState<AspectMode>('16:9')
@@ -479,8 +480,10 @@ function App(): React.JSX.Element {
   const [photoCount, setPhotoCount] = useState(0)
   const [lastPhoto, setLastPhoto] = useState<string | null>(null)
   const [isGalleryOpen, setIsGalleryOpen] = useState(false)
-  const [isRecording, setIsRecording] = useState(false)
-  const [recordingSeconds, setRecordingSeconds] = useState(0)
+  const [micEnabled, setMicEnabled] = useState(true)
+  const recording = useRecording(setCaptureMessage)
+  const isRecording = recording.phase === 'recording'
+  const recordingSeconds = recording.seconds
 
   const renderSettings: RenderSettings = {
     filterMode,
@@ -500,9 +503,8 @@ function App(): React.JSX.Element {
   }
 
   const stopCamera = (): void => {
-    if (recorderRef.current?.state === 'recording') {
-      recorderRef.current.stop()
-    }
+    recording.stop()
+    cameraRequestRef.current += 1
 
     stopPreviewRender()
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -516,7 +518,13 @@ function App(): React.JSX.Element {
   }
 
   const startCamera = async (): Promise<void> => {
+    const request = ++cameraRequestRef.current
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setErrorMessage('Camera access requires HTTPS and a supported browser. Open the demo in its own tab.')
+        setCameraStatus('error')
+        return
+      }
       setCameraStatus('starting')
       setErrorMessage('')
 
@@ -530,6 +538,10 @@ function App(): React.JSX.Element {
         }
       })
 
+      if (request !== cameraRequestRef.current) {
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
       streamRef.current = stream
 
       if (videoRef.current) {
@@ -537,12 +549,13 @@ function App(): React.JSX.Element {
         await videoRef.current.play()
       }
 
-      setCameraStatus('live')
+      if (request === cameraRequestRef.current) setCameraStatus('live')
     } catch (error) {
       console.error(error)
-      setErrorMessage(
-        'VYNT could not access the camera. Check Windows camera permission and close other camera apps.'
-      )
+      if (request !== cameraRequestRef.current) return
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      setErrorMessage(mediaError(error, 'camera'))
       setCameraStatus('error')
     }
   }
@@ -574,14 +587,14 @@ function App(): React.JSX.Element {
       )
 
       const imageDataUrl = canvas.toDataURL('image/png')
-      const result = await window.vynt.savePhoto(imageDataUrl)
+      const result = await savePhoto(imageDataUrl)
 
       if (result.saved) {
         setPhotoCount((count) => count + 1)
         setLastPhoto(imageDataUrl)
         setCaptureMessage({
           tone: 'success',
-          text: `Saved ${getFilterLabel(filterMode)} photo.`
+          text: result.downloaded ? 'Photo download started. Check your downloads.' : `Saved ${getFilterLabel(filterMode)} photo.`
         })
       } else {
         setCaptureMessage({
@@ -602,89 +615,10 @@ function App(): React.JSX.Element {
   }
 
   const startRecording = (): void => {
-    const canvas = previewCanvasRef.current
-
-    if (!canvas || cameraStatus !== 'live') {
-      return
-    }
-
-    const stream = canvas.captureStream(30)
-
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-      ? 'video/webm;codecs=vp9'
-      : 'video/webm'
-
-    const recorder = new MediaRecorder(stream, {
-      mimeType,
-      videoBitsPerSecond: 5_000_000
-    })
-
-    recordingChunksRef.current = []
-
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        recordingChunksRef.current.push(event.data)
-      }
-    }
-
-    recorder.onstop = async () => {
-      try {
-        const blob = new Blob(recordingChunksRef.current, {
-          type: mimeType
-        })
-
-        const result = await window.vynt.saveVideo(await blob.arrayBuffer())
-
-        setCaptureMessage(
-          result.saved
-            ? {
-                tone: 'success',
-                text: 'Video saved as WebM.'
-              }
-            : {
-                tone: 'neutral',
-                text: 'Video save cancelled.'
-              }
-        )
-      } catch (error) {
-        console.error(error)
-
-        setCaptureMessage({
-          tone: 'error',
-          text: 'VYNT could not save the video.'
-        })
-      }
-
-      stream.getTracks().forEach((track) => track.stop())
-      setIsRecording(false)
-      setRecordingSeconds(0)
-    }
-
-    recorderRef.current = recorder
-    recorder.start(1000)
-    setIsRecording(true)
-    setRecordingSeconds(0)
-  }
-
-  const stopRecording = (): void => {
-    if (recorderRef.current?.state === 'recording') {
-      recorderRef.current.stop()
+    if (previewCanvasRef.current && cameraStatus === 'live') {
+      void recording.start(previewCanvasRef.current, micEnabled)
     }
   }
-
-  useEffect(() => {
-    if (!isRecording) {
-      return
-    }
-
-    const timer = window.setInterval(() => {
-      setRecordingSeconds((seconds) => seconds + 1)
-    }, 1000)
-
-    return () => {
-      window.clearInterval(timer)
-    }
-  }, [isRecording])
 
   useEffect(() => {
     if (cameraStatus !== 'live') {
@@ -711,7 +645,7 @@ function App(): React.JSX.Element {
             canvas,
             dimensions.width,
             dimensions.height,
-            renderSettings,
+            { filterMode, pixelSize, grain, zoom, aspectMode, dateImprint },
             new Date()
           )
         } catch (error) {
@@ -729,6 +663,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     return () => {
+      cameraRequestRef.current += 1
       stopPreviewRender()
       streamRef.current?.getTracks().forEach((track) => track.stop())
     }
@@ -759,12 +694,12 @@ function App(): React.JSX.Element {
 
           <div className={`status status-${cameraStatus.toLowerCase()}`}>
             <span className="status-dot" />
-            {isRecording ? `REC ${formattedTime}` : statusText}
+            {isRecording ? `REC ${formattedTime}${recording.hasAudio ? ' · MIC' : ' · SILENT'}` : statusText}
           </div>
 
           <div className="top-actions">
             {cameraStatus === 'live' && (
-              <button className="power-button" onClick={stopCamera}>
+              <button className="power-button" onClick={stopCamera} disabled={recording.phase === 'starting'}>
                 TURN OFF
               </button>
             )}
@@ -799,18 +734,19 @@ function App(): React.JSX.Element {
                     : 'Camera is standing by'}
               </p>
               {errorMessage && <small>{errorMessage}</small>}
+              {cameraStatus === 'idle' && <span className="start-hint">Press the red shutter to start</span>}
             </div>
           )}
 
           <div className="viewfinder-overlay">
-            <span>{isRecording ? '● REC' : 'REC'}</span>
+            <span>{isRecording ? '● REC' : cameraStatus === 'live' ? '● LIVE' : 'STANDBY'}</span>
             <span>{aspectMode}</span>
           </div>
 
-          <div className="focus-box" />
+          {cameraStatus === 'live' && <div className="focus-box" />}
 
           {captureMessage && (
-            <div className={`capture-message capture-message-${captureMessage.tone}`}>
+            <div role="status" aria-live="polite" className={`capture-message capture-message-${captureMessage.tone}`}>
               {captureMessage.text}
             </div>
           )}
@@ -828,7 +764,8 @@ function App(): React.JSX.Element {
                     filterMode === filter.id ? 'filter-button-active' : ''
                   }`}
                   onClick={() => setFilterMode(filter.id)}
-                  disabled={isCapturing || isRecording}
+                  aria-pressed={filterMode === filter.id}
+                  disabled={isCapturing || recording.busy}
                 >
                   {filter.label}
                 </button>
@@ -855,6 +792,8 @@ function App(): React.JSX.Element {
                       aspectMode === aspect ? 'compact-button-active' : ''
                     }`}
                     onClick={() => setAspectMode(aspect)}
+                    aria-pressed={aspectMode === aspect}
+                    disabled={recording.busy}
                   >
                     {aspect}
                   </button>
@@ -865,6 +804,7 @@ function App(): React.JSX.Element {
                     dateImprint ? 'compact-button-active' : ''
                   }`}
                   onClick={() => setDateImprint((value) => !value)}
+                  aria-pressed={dateImprint}
                 >
                   DATE {dateImprint ? 'ON' : 'OFF'}
                 </button>
@@ -916,6 +856,16 @@ function App(): React.JSX.Element {
             </div>
           </div>
 
+          <div className="audio-row">
+            <button
+              className={`compact-button ${micEnabled ? 'compact-button-active' : ''}`}
+              aria-pressed={micEnabled}
+              disabled={recording.busy}
+              onClick={() => setMicEnabled((value) => !value)}
+            >MIC {micEnabled ? 'ON' : 'OFF'}</button>
+            <span>{recording.hasAudio ? 'Microphone is recording' : micEnabled ? 'Your voice is included when recording' : 'Silent video · microphone stays off'}</span>
+          </div>
+
           <div className="action-row">
             <div className="mode-readout">
               <span className="control-label">MODE</span>
@@ -924,12 +874,14 @@ function App(): React.JSX.Element {
 
             <button
               className="shutter-button"
+              aria-label={cameraStatus === 'live' ? 'Take photo' : 'Start camera'}
+              title={cameraStatus === 'live' ? 'Take photo' : 'Start camera'}
               onClick={() =>
                 cameraStatus === 'live'
                   ? void capturePhoto()
                   : void startCamera()
               }
-              disabled={cameraStatus === 'starting' || isCapturing}
+              disabled={cameraStatus === 'starting' || isCapturing || recording.busy}
             >
               <span />
             </button>
@@ -938,10 +890,10 @@ function App(): React.JSX.Element {
               className={`record-button ${
                 isRecording ? 'record-button-active' : ''
               }`}
-              onClick={isRecording ? stopRecording : startRecording}
-              disabled={cameraStatus !== 'live'}
+              onClick={isRecording ? recording.stop : startRecording}
+              disabled={cameraStatus !== 'live' || isCapturing || recording.phase === 'starting' || recording.phase === 'saving'}
             >
-              {isRecording ? `STOP ${formattedTime}` : 'RECORD VIDEO'}
+              {isRecording ? `STOP ${formattedTime}` : recording.phase === 'starting' ? 'STARTING…' : recording.phase === 'saving' ? 'SAVING…' : 'RECORD VIDEO'}
             </button>
 
             <div className="mode-readout right-readout">
@@ -951,6 +903,15 @@ function App(): React.JSX.Element {
           </div>
         </section>
       </section>
+      <footer className="app-footer">
+        <span>VYNT · A little digital nostalgia.</span>
+        <nav aria-label="Project links">
+          {!window.vynt && <a href="https://github.com/Yash-Tripath1/Vynt/releases/latest" target="_blank" rel="noreferrer">Download for Windows ↗</a>}
+          <a href="https://github.com/Yash-Tripath1/Vynt" target="_blank" rel="noreferrer">Source code ↗</a>
+          <a href="./privacy.html" target="_blank" rel="noreferrer">Privacy</a>
+        </nav>
+        <small>Camera and microphone are processed on your device. No media uploads. Video clips: up to 5 minutes.</small>
+      </footer>
       {isGalleryOpen && lastPhoto && (
         <div className="gallery-modal" onClick={() => setIsGalleryOpen(false)}>
           <div className="gallery-card" onClick={(event) => event.stopPropagation()}>
