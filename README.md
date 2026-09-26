@@ -99,4 +99,4 @@ tests/                   Browser and Electron smoke tests
 docs/                    Publishing guide, release notes and QA record
 ```
 
-Built by **Yash Tripathi**. No open-source license has been added on the author's behalf; choose and add one before offering licensed reuse.
+Built by **Yash Tripathi**. MIT License
