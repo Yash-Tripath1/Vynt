@@ -6,8 +6,7 @@ A local-first Y2K photo booth built with React, TypeScript, Canvas and Electron.
 
 [Download for Windows](https://github.com/Yash-Tripath1/Vynt/releases/latest) · [Report an issue](https://github.com/Yash-Tripath1/Vynt/issues) · [Publishing guide](docs/PUBLISHING.md)
 
-> The included workflow deploys the browser demo to **https://yash-tripath1.github.io/Vynt/** after GitHub Pages is enabled and the workflow succeeds. That address is the intended deployment, not a claim that this new version is already live.
-
+> The included workflow deploys the browser demo to **https://yash-tripath1.github.io/Vynt/** after GitHub Pages is enabled and the workflow succeeds.
 ![VYNT interface, camera in standby](docs/interface.png)
 
 ## What it does
@@ -16,7 +15,6 @@ A local-first Y2K photo booth built with React, TypeScript, Canvas and Electron.
 - **Canvas-rendered texture:** adjustable zoom, pixelation and grain, plus a date imprint.
 - **Two frames:** 16:9 and 4:3.
 - **PNG photos:** full capture resolution, with a temporary last-photo preview.
-- **Video with your voice:** MIC ON records microphone audio with the filtered canvas stream; MIC OFF records silently.
 - **Local processing:** no media uploads, accounts, advertising or app analytics.
 - **Browser + desktop:** downloads in the browser, native Save As dialogs on desktop.
 
@@ -99,4 +97,4 @@ tests/                   Browser and Electron smoke tests
 docs/                    Publishing guide, release notes and QA record
 ```
 
-Built by **Yash Tripathi**. MIT License
+Built by **Anadi Tripathi**. MIT License
